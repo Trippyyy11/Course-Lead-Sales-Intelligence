@@ -70,22 +70,37 @@ async def join_data(
     df_a = storage[file_a_id].copy()
     df_b = storage[file_b_id].copy()
     
-    if key_a not in df_a.columns or key_b not in df_b.columns:
-        raise HTTPException(status_code=400, detail="Join keys not found in respective files")
-    
-    # Cast join keys to string to prevent type mismatch failures
-    df_a[key_a] = df_a[key_a].astype(str)
-    df_b[key_b] = df_b[key_b].astype(str)
-    
     try:
-        merged_df = pd.merge(
-            df_a, 
-            df_b, 
-            left_on=key_a, 
-            right_on=key_b, 
-            how=join_type,
-            suffixes=('_fileA', '_fileB')
-        )
+        if join_type == "append":
+            # Append rows from both files using only the shared columns
+            common_columns = [col for col in df_a.columns if col in df_b.columns]
+            if not common_columns:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No common columns found to append on. Please ensure files share at least one column name."
+                )
+            merged_df = pd.concat(
+                [
+                    df_a[common_columns].reset_index(drop=True),
+                    df_b[common_columns].reset_index(drop=True),
+                ],
+                ignore_index=True,
+            )
+        else:
+            if key_a not in df_a.columns or key_b not in df_b.columns:
+                raise HTTPException(status_code=400, detail="Join keys not found in respective files")
+            
+            # Cast join keys to string to prevent type mismatch failures
+            df_a[key_a] = df_a[key_a].astype(str)
+            df_b[key_b] = df_b[key_b].astype(str)
+            merged_df = pd.merge(
+                df_a, 
+                df_b, 
+                left_on=key_a, 
+                right_on=key_b, 
+                how=join_type,
+                suffixes=('_fileA', '_fileB')
+            )
         
         # Store the result for preview and download
         result_id = str(uuid.uuid4())
