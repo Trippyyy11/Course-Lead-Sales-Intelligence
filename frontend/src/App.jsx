@@ -115,6 +115,7 @@ function App() {
   const [previewData, setPreviewData] = useState(null);
   const [finalResultId, setFinalResultId] = useState(null);
   const [activeColumns, setActiveColumns] = useState([]);
+  const [isPreviewSheetOpen, setIsPreviewSheetOpen] = useState(false);
 
   const handleFileUpload = async (e) => {
     const uploadedFiles = Array.from(e.target.files);
@@ -281,6 +282,7 @@ function App() {
       const previewResp = await axios.get(`${API_BASE}/preview/${currentResultId}`);
       setPreviewData(previewResp.data);
       setSuccess('Data pipeline executed successfully!');
+      setIsPreviewSheetOpen(true);
     } catch (err) {
       setError(err.response?.data?.detail || err.message || 'Execution failed');
     } finally {
@@ -703,109 +705,118 @@ function App() {
           </section>
         </div>
 
-        {/* Main Area: Preview */}
-        <div className="xl:col-span-8 flex flex-col gap-6">
-          <section className="glass-card flex-1 flex flex-col p-8 border-white/10 min-h-[600px]">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-              <div className="space-y-1">
-                <h2 className="text-2xl font-black flex items-center gap-3">
-                  <Table className="w-6 h-6 text-indigo-400" /> Live Preview
-                </h2>
-                <p className="text-slate-400 text-sm font-medium">Verified output of your data orchestration chain.</p>
-              </div>
-              {previewData && (
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={handleDownload}
-                  className="glass-button bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30 text-xs py-2 flex items-center gap-2 px-5"
-                >
-                  <Download className="w-4 h-4" /> Export CSV
-                </motion.button>
-              )}
-            </div>
-
-            {error && (
-              <motion.div 
-                initial={{ opacity: 0, y: -10 }} 
-                animate={{ opacity: 1, y: 0 }}
-                className="mb-8 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-3 text-rose-400 text-sm font-medium"
+        {/* Main Area: Preview Trigger Only */}
+        <div className="xl:col-span-8 flex items-start justify-end">
+          <div className="flex flex-col items-end gap-3">
+            {previewData && (
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setIsPreviewSheetOpen(true)}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-fuchsia-500 hover:bg-fuchsia-400 text-xs md:text-sm font-semibold text-white shadow-[0_0_25px_rgba(217,70,239,0.7)] transition-all"
               >
-                <AlertCircle className="w-5 h-5 shrink-0" />
-                <span>{typeof error === 'object' ? JSON.stringify(error) : error}</span>
-              </motion.div>
+                <Table className="w-4 h-4" />
+                Open Preview Sheet
+              </motion.button>
             )}
-
-            {success && (
-              <motion.div 
-                initial={{ opacity: 0, y: -10 }} 
-                animate={{ opacity: 1, y: 0 }}
-                className="mb-8 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-3 text-emerald-400 text-sm font-medium"
-              >
-                <CheckCircle2 className="w-5 h-5 shrink-0" />
-                <span>{success}</span>
-              </motion.div>
+            {!previewData && (
+              <p className="text-[11px] text-slate-500">
+                Run your pipeline to unlock the preview sheet.
+              </p>
             )}
-
-            <div className="flex-1 relative">
-              {!previewData ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 border border-slate-700/80 rounded-3xl bg-slate-900/70 shadow-[0_0_40px_rgba(15,23,42,0.9)]">
-                  <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-4 text-white/10">
-                    <Database className="w-10 h-10" />
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-300">Awaiting Pipeline Execution</h3>
-                  <p className="max-w-[280px] text-center text-sm text-slate-500 mt-2 leading-relaxed font-medium">
-                    Upload your datasets and configure the join logic to see magic happen.
-                  </p>
-                </div>
-              ) : (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="h-full rounded-3xl border border-slate-700/80 bg-[radial-gradient(circle_at_top,_rgba(129,140,248,0.18),_transparent_55%),_radial-gradient(circle_at_bottom,_rgba(8,47,73,0.9),_rgba(15,23,42,1))] shadow-[0_0_40px_rgba(15,23,42,0.9)] overflow-hidden"
-                >
-                  <div className="overflow-auto max-h-[500px]">
-                    <table className="w-full border-collapse text-left text-slate-200">
-                      <thead className="bg-slate-900/80 backdrop-blur-md">
-                        <tr className="border-b border-slate-700/80">
-                          {previewData.columns.map(col => (
-                            <th
-                              key={col}
-                              className="px-6 py-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.25em] whitespace-nowrap"
-                            >
-                              {col}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/80">
-                        {previewData.data.map((row, i) => (
-                          <tr
-                            key={i}
-                            className="group transition-colors even:bg-slate-900/40 hover:bg-slate-800/60"
-                          >
-                            {previewData.columns.map(col => (
-                              <td
-                                key={`${i}-${col}`}
-                                className="px-6 py-3 text-xs font-medium text-slate-300 group-hover:text-slate-50 transition-colors whitespace-nowrap"
-                              >
-                                {String(row[col])}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="p-4 bg-slate-900/80 border-t border-slate-700/80 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">
-                    Top 50 Sample Rows • Dark Preview
-                  </div>
-                </motion.div>
-              )}
-            </div>
-          </section>
+          </div>
         </div>
       </main>
+
+      {/* Right Side Preview Sheet */}
+      <AnimatePresence>
+        {previewData && isPreviewSheetOpen && (
+          <>
+            <motion.div
+              key="preview-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.4 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-40 bg-slate-950"
+              onClick={() => setIsPreviewSheetOpen(false)}
+            />
+            <motion.aside
+              key="preview-sheet"
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+              className="fixed right-0 top-0 z-50 h-full w-full max-w-4xl bg-slate-950/95 border-l border-slate-800 shadow-[0_0_50px_rgba(15,23,42,1)] flex flex-col"
+            >
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-gradient-to-l from-slate-900 via-slate-950 to-slate-900">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Table className="w-4 h-4 text-indigo-400" />
+                    <h3 className="text-sm md:text-base font-semibold text-slate-100">
+                      Active Preview Sheet
+                    </h3>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Top 50 sample rows from the latest pipeline run.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsPreviewSheetOpen(false)}
+                  className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-slate-800/70 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-hidden">
+                <div className="h-full overflow-auto">
+                  <table className="w-full border-collapse text-left text-slate-200">
+                    <thead className="bg-slate-900/95 backdrop-blur-md sticky top-0 z-10">
+                      <tr className="border-b border-slate-800">
+                        {previewData.columns.map(col => (
+                          <th
+                            key={col}
+                            className="px-5 py-3 text-[10px] md:text-[11px] font-black text-slate-300 uppercase tracking-[0.25em] whitespace-nowrap bg-slate-900/95"
+                          >
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {previewData.data.map((row, i) => (
+                        <tr
+                          key={i}
+                          className="group transition-colors even:bg-slate-900/50 hover:bg-slate-800/70"
+                        >
+                          {previewData.columns.map(col => (
+                            <td
+                              key={`${i}-${col}`}
+                              className="px-5 py-3 text-[11px] md:text-xs font-medium text-slate-300 group-hover:text-slate-50 transition-colors whitespace-nowrap"
+                            >
+                              {String(row[col])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="px-6 py-3 border-t border-slate-800 text-[10px] font-bold text-slate-500 uppercase tracking-[0.3em] flex items-center justify-between">
+                <span>Top 50 Sample Rows • Dark Preview</span>
+                <button
+                  onClick={() => setIsPreviewSheetOpen(false)}
+                  className="text-[10px] font-semibold text-slate-400 hover:text-slate-200 underline-offset-4 hover:underline"
+                >
+                  Close Sheet
+                </button>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
 
       <footer className="max-w-7xl mx-auto mt-12 pt-8 border-t border-white/5 flex justify-center opacity-30">
         <p className="text-[10px] font-black uppercase tracking-[0.5em] text-slate-500">
