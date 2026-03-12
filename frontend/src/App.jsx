@@ -1,3 +1,21 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  Upload, Table, Download, Settings, FileText, 
+  AlertCircle, CheckCircle2, Plus, Trash2, 
+  ArrowRight, Layers, Sparkles, Database, X
+} from 'lucide-react';
+import { clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+/** Utility for tailwind classes */
+function cn(...inputs) {
+  return twMerge(clsx(inputs));
+}
+
+const API_BASE = 'http://localhost:8000';
+
 /** Custom Select Component for Premium UI */
 function CustomSelect({ label, value, options, onChange, placeholder, disabled, className }) {
   const [isOpen, setIsOpen] = useState(false);
