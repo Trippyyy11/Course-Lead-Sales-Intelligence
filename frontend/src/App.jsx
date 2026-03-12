@@ -1,20 +1,74 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Upload, Table, Download, Settings, FileText, 
-  AlertCircle, CheckCircle2, Plus, Trash2, 
-  ArrowRight, Layers, Sparkles, Database, X
-} from 'lucide-react';
-import { clsx } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+/** Custom Select Component for Premium UI */
+function CustomSelect({ label, value, options, onChange, placeholder, disabled, className }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedOption = options.find(opt => opt.value === value);
 
-/** Utility for tailwind classes */
-function cn(...inputs) {
-  return twMerge(clsx(inputs));
+  return (
+    <div className={cn("space-y-1.5 w-full relative", className)}>
+      {label && <label className="text-[10px] font-bold text-slate-500 uppercase block ml-1">{label}</label>}
+      <div className="relative">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setIsOpen(!isOpen)}
+          className={cn(
+            "glass-input text-left flex items-center justify-between group",
+            disabled && "opacity-50 cursor-not-allowed",
+            isOpen && "border-indigo-500/50 bg-white/10"
+          )}
+        >
+          <span className={cn("truncate", !selectedOption && "text-slate-500")}>
+            {selectedOption ? selectedOption.label : placeholder}
+          </span>
+          <motion.div
+            animate={{ rotate: isOpen ? 180 : 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <Settings className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400" />
+          </motion.div>
+        </button>
+
+        <AnimatePresence>
+          {isOpen && (
+            <>
+              {/* Click outside backdrop */}
+              <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+              
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                className="absolute z-50 w-full mt-2 glass-card p-2 border-white/10 max-h-60 overflow-auto shadow-3xl left-0"
+              >
+                {options.length === 0 ? (
+                  <div className="px-4 py-3 text-xs text-slate-500 italic text-center">No options available</div>
+                ) : (
+                  options.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => {
+                        onChange(opt.value);
+                        setIsOpen(false);
+                      }}
+                      className={cn(
+                        "w-full text-left px-4 py-2.5 rounded-xl text-xs transition-colors mb-1 last:mb-0",
+                        value === opt.value 
+                          ? "bg-indigo-600 text-white font-bold" 
+                          : "text-slate-300 hover:bg-white/5 hover:text-white"
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))
+                )}
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
 }
-
-const API_BASE = 'http://localhost:8000';
 
 function App() {
   const [files, setFiles] = useState([]);
@@ -24,16 +78,13 @@ function App() {
   const [success, setSuccess] = useState(null);
 
   // Multi-Step Join State
-  // The first join is special: File A + File B
-  // Subsequent joins: Previous Result + New File
   const [joins, setJoins] = useState([
     { id: crypto.randomUUID(), fileA: '', keyA: '', fileB: '', keyB: '', type: 'inner' }
   ]);
 
-  // Preview Data tracking the final result of the chain
   const [previewData, setPreviewData] = useState(null);
   const [finalResultId, setFinalResultId] = useState(null);
-  const [activeColumns, setActiveColumns] = useState([]); // Columns available after current chain
+  const [activeColumns, setActiveColumns] = useState([]);
 
   const handleFileUpload = async (e) => {
     const uploadedFiles = Array.from(e.target.files);
@@ -62,7 +113,7 @@ function App() {
       id: crypto.randomUUID(), 
       fileB: '', 
       keyB: '', 
-      keyA: '', // This will be the key from the PREVIOUS result
+      keyA: '', 
       type: 'inner' 
     }]);
   };
@@ -83,14 +134,12 @@ function App() {
     setSuccess(null);
 
     try {
-      let currentFileA = joins[0].fileA;
       let currentResultId = null;
       let lastCols = [];
 
       for (let i = 0; i < joins.length; i++) {
         const step = joins[i];
         
-        // Validation
         if (i === 0 && (!step.fileA || !step.fileB || !step.keyA || !step.keyB)) {
           throw new Error(`Step 1: Please select both files and keys`);
         }
@@ -108,7 +157,6 @@ function App() {
       setFinalResultId(currentResultId);
       setActiveColumns(lastCols);
 
-      // Fetch preview
       const previewResp = await axios.get(`${API_BASE}/preview/${currentResultId}`);
       setPreviewData(previewResp.data);
       setSuccess('Data pipeline executed successfully!');
@@ -151,7 +199,7 @@ function App() {
               Forge<span className="text-indigo-400">Join</span>
             </h1>
           </div>
-          <p className="text-slate-400 font-medium">No-code data orchestration & intelligent merging.</p>
+          <p className="text-slate-400 font-medium text-sm">No-code data orchestration & intelligent merging.</p>
         </motion.div>
 
         <div className="flex items-center gap-4">
@@ -171,9 +219,11 @@ function App() {
         <div className="xl:col-span-4 space-y-6">
           {/* Upload Card */}
           <section className="glass-card p-6 border-white/10">
-            <h2 className="text-lg font-bold flex items-center gap-2 mb-5">
-              <Upload className="w-5 h-5 text-indigo-400" /> Source Data
-            </h2>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Upload className="w-5 h-5 text-indigo-400" /> Source Data
+              </h2>
+            </div>
             <div className="relative group">
               <input
                 type="file" multiple onChange={handleFileUpload} accept=".csv,.xls,.xlsx"
@@ -204,7 +254,7 @@ function App() {
                 ))}
               </AnimatePresence>
             </div>
-            {uploadLoading && <div className="mt-3 h-1 w-full bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 animate-[loading_2s_infinite]" style={{width: '60%'}}></div></div>}
+            {uploadLoading && <div className="mt-4 h-1 w-full bg-white/5 rounded-full overflow-hidden"><motion.div initial={{ x: "-100%" }} animate={{ x: "100%" }} transition={{ repeat: Infinity, duration: 1.5 }} className="h-full w-1/2 bg-indigo-500"></motion.div></div>}
           </section>
 
           {/* Pipeline Card */}
@@ -247,82 +297,63 @@ function App() {
                   </div>
 
                   {/* Join Block */}
-                  <div className="space-y-3 p-4 bg-white/5 rounded-2xl border border-white/5">
+                  <div className="space-y-5 p-5 bg-white/5 rounded-2xl border border-white/5">
                     {index === 0 ? (
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">File A (Base)</label>
-                        <select 
-                          className="glass-input text-xs"
-                          value={join.fileA}
-                          onChange={(e) => updateJoin(join.id, 'fileA', e.target.value)}
-                        >
-                          <option value="">Select Primary File</option>
-                          {files.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                        </select>
-                      </div>
+                      <CustomSelect 
+                        label="File A (Base)"
+                        value={join.fileA}
+                        options={files.map(f => ({ value: f.id, label: f.name }))}
+                        onChange={(val) => updateJoin(join.id, 'fileA', val)}
+                        placeholder="Select Primary Dataset"
+                      />
                     ) : (
-                      <div className="flex items-center gap-2 py-2 px-3 bg-indigo-500/10 rounded-xl border border-indigo-500/20">
-                        <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                        <span className="text-xs font-bold text-indigo-300 italic">Result of Step {index}</span>
+                      <div className="flex items-center gap-2 py-3 px-4 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 shadow-inner">
+                        <Layers className="w-4 h-4 text-indigo-400" />
+                        <span className="text-xs font-bold text-indigo-300 italic tracking-wide">Output of Pipeline Step {index}</span>
                       </div>
                     )}
 
-                    <div className="grid grid-cols-2 gap-2">
-                       <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Join Key (Left)</label>
-                        <select 
-                          className="glass-input text-[11px]"
-                          value={join.keyA}
-                          onChange={(e) => updateJoin(join.id, 'keyA', e.target.value)}
-                          disabled={index === 0 ? !join.fileA : false}
-                        >
-                          <option value="">Select Key</option>
-                          {/* Columns from fileA if index 0, otherwise we don't know yet because pipeline hasn't run. 
-                              In a real app, we'd simulate the schema or run incrementally. 
-                              For now, we'll allow manual entry or try to guess if we have activeColumns (from last run) 
-                          */}
-                          {(index === 0 ? getFileColumns(join.fileA) : activeColumns).map(col => <option key={col} value={col}>{col}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Join Type</label>
-                        <select 
-                          className="glass-input text-[11px]"
-                          value={join.type}
-                          onChange={(e) => updateJoin(join.id, 'type', e.target.value)}
-                        >
-                          <option value="inner">Inner</option>
-                          <option value="left">Left</option>
-                          <option value="right">Right</option>
-                          <option value="outer">Outer</option>
-                        </select>
-                      </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <CustomSelect 
+                        label="Join Key (Left)"
+                        value={join.keyA}
+                        options={(index === 0 ? getFileColumns(join.fileA) : activeColumns).map(col => ({ value: col, label: col }))}
+                        onChange={(val) => updateJoin(join.id, 'keyA', val)}
+                        placeholder="Select Key"
+                        disabled={index === 0 && !join.fileA}
+                      />
+                      <CustomSelect 
+                        label="Join Type"
+                        value={join.type}
+                        options={[
+                          { value: 'inner', label: 'Inner Join' },
+                          { value: 'left', label: 'Left Join' },
+                          { value: 'right', label: 'Right Join' },
+                          { value: 'outer', label: 'Outer Join' }
+                        ]}
+                        onChange={(val) => updateJoin(join.id, 'type', val)}
+                        placeholder="Join Type"
+                      />
                     </div>
 
-                    <div className="border-t border-white/5 pt-3 mt-1">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Combine with File</label>
-                      <select 
-                        className="glass-input text-xs"
+                    <div className="border-t border-white/10 pt-4 mt-2">
+                      <CustomSelect 
+                        label="Combine with File"
                         value={join.fileB}
-                        onChange={(e) => updateJoin(join.id, 'fileB', e.target.value)}
-                      >
-                        <option value="">Select Target File</option>
-                        {files.filter(f => f.id !== join.fileA).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                      </select>
+                        options={files.filter(f => f.id !== join.fileA).map(f => ({ value: f.id, label: f.name }))}
+                        onChange={(val) => updateJoin(join.id, 'fileB', val)}
+                        placeholder="Select Target Dataset"
+                      />
                     </div>
 
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">Join Key (Right)</label>
-                      <select 
-                        className="glass-input text-[11px]"
-                        value={join.keyB}
-                        onChange={(e) => updateJoin(join.id, 'keyB', e.target.value)}
-                        disabled={!join.fileB}
-                      >
-                        <option value="">Select Key</option>
-                        {getFileColumns(join.fileB).map(col => <option key={col} value={col}>{col}</option>)}
-                      </select>
-                    </div>
+                    <CustomSelect 
+                      label="Join Key (Right)"
+                      value={join.keyB}
+                      options={getFileColumns(join.fileB).map(col => ({ value: col, label: col }))}
+                      onChange={(val) => updateJoin(join.id, 'keyB', val)}
+                      placeholder="Select Key"
+                      disabled={!join.fileB}
+                    />
                   </div>
                 </motion.div>
               ))}
@@ -331,17 +362,17 @@ function App() {
             <button
               onClick={executeChain}
               disabled={executeLoading || files.length < 2}
-              className="glass-button primary-gradient w-full mt-8 flex items-center justify-center gap-2 text-sm shadow-indigo-500/20"
+              className="glass-button primary-gradient w-full mt-8 flex items-center justify-center gap-2 text-sm shadow-xl"
             >
               {executeLoading ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Orchestrating Pipeline...
+                  Building Pipeline...
                 </>
               ) : (
                 <>
-                  <ArrowRight className="w-4 h-4" />
-                  Execute Join Sequence
+                  <Sparkles className="w-4 h-4" />
+                  Harmonize & Execute
                 </>
               )}
             </button>
@@ -360,10 +391,10 @@ function App() {
               </div>
               {previewData && (
                 <motion.button
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
                   onClick={handleDownload}
-                  className="glass-button bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30 text-xs py-2 flex items-center gap-2"
+                  className="glass-button bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30 text-xs py-2 flex items-center gap-2 px-5"
                 >
                   <Download className="w-4 h-4" /> Export CSV
                 </motion.button>
@@ -394,12 +425,12 @@ function App() {
 
             <div className="flex-1 relative">
               {!previewData ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 border border-white/5 rounded-3xl bg-white/[0.02]">
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 border border-white/5 rounded-3xl bg-white/[0.02] shadow-inner">
                   <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-4 text-white/10">
                     <Database className="w-10 h-10" />
                   </div>
                   <h3 className="text-lg font-bold text-slate-300">Awaiting Pipeline Execution</h3>
-                  <p className="max-w-[280px] text-center text-sm text-slate-500 mt-2 leading-relaxed">
+                  <p className="max-w-[280px] text-center text-sm text-slate-500 mt-2 leading-relaxed font-medium">
                     Upload your datasets and configure the join logic to see magic happen.
                   </p>
                 </div>
@@ -407,7 +438,7 @@ function App() {
                 <motion.div 
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="table-glass h-full border-white/5"
+                  className="table-glass h-full border-white/5 shadow-2xl"
                 >
                   <div className="overflow-auto max-h-[500px]">
                     <table className="w-full border-collapse text-left">
