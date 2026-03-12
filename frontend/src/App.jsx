@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -19,10 +20,68 @@ const API_BASE = 'http://localhost:8000';
 /** Custom Select Component for Premium UI */
 function CustomSelect({ label, value, options, onChange, placeholder, disabled, className }) {
   const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
   const selectedOption = options.find(opt => opt.value === value);
 
+  useEffect(() => {
+    if (isOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom + window.scrollY,
+        left: rect.left + window.scrollX,
+        width: rect.width
+      });
+    }
+  }, [isOpen]);
+
+  const menuContent = (
+    <AnimatePresence>
+      {isOpen && (
+        <>
+          {/* Click outside backdrop */}
+          <div className="fixed inset-0 z-[9998]" onClick={() => setIsOpen(false)} />
+          
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="fixed z-[9999] dropdown-menu p-1.5 border-white/10 max-h-64 overflow-auto shadow-2xl"
+            style={{
+              top: coords.top + 8,
+              left: coords.left,
+              width: coords.width
+            }}
+          >
+            {options.length === 0 ? (
+              <div className="px-4 py-3 text-xs text-slate-500 italic text-center">No options available</div>
+            ) : (
+              options.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    onChange(opt.value);
+                    setIsOpen(false);
+                  }}
+                  className={cn(
+                    "w-full text-left px-4 py-3 rounded-xl text-xs transition-all mb-1 last:mb-0",
+                    value === opt.value 
+                      ? "bg-indigo-600 text-white font-bold" 
+                      : "text-slate-300 hover:bg-white/10 hover:text-white hover:translate-x-1"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))
+            )}
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+
   return (
-    <div className={cn("space-y-1.5 w-full relative", className)}>
+    <div className={cn("space-y-1.5 w-full relative", className)} ref={containerRef}>
       {label && <label className="text-[10px] font-bold text-slate-500 uppercase block ml-1">{label}</label>}
       <div className="relative">
         <button
@@ -46,43 +105,7 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
           </motion.div>
         </button>
 
-        <AnimatePresence>
-          {isOpen && (
-            <>
-              {/* Click outside backdrop */}
-              <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-              
-              <motion.div
-                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className="absolute z-50 w-full mt-2 dropdown-menu p-1.5 border-white/10 max-h-64 overflow-auto shadow-2xl left-0"
-              >
-                {options.length === 0 ? (
-                  <div className="px-4 py-3 text-xs text-slate-500 italic text-center">No options available</div>
-                ) : (
-                  options.map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => {
-                        onChange(opt.value);
-                        setIsOpen(false);
-                      }}
-                      className={cn(
-                        "w-full text-left px-4 py-3 rounded-xl text-xs transition-all mb-1 last:mb-0",
-                        value === opt.value 
-                          ? "bg-indigo-600 text-white font-bold" 
-                          : "text-slate-300 hover:bg-white/10 hover:text-white hover:translate-x-1"
-                      )}
-                    >
-                      {opt.label}
-                    </button>
-                  ))
-                )}
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
+        {isOpen && createPortal(menuContent, document.body)}
       </div>
     </div>
   );
@@ -541,16 +564,15 @@ function App() {
                          {showTransforms[join.id] ? <X className="w-3 h-3" /> : <Settings className="w-3 h-3" />}
                          {showTransforms[join.id] ? 'Hide' : 'Advanced'} Transformations
                        </button>
-
-                       <AnimatePresence>
-                         {showTransforms[join.id] && (                            <motion.div 
+                        <AnimatePresence>
+                         {showTransforms[join.id] && (
+                           <motion.div 
                              initial={{ height: 0, opacity: 0 }}
                              animate={{ height: 'auto', opacity: 1 }}
                              exit={{ height: 0, opacity: 0 }}
                              className="bg-slate-900/50 rounded-xl p-4 border border-white/5 space-y-4 overflow-y-auto max-h-[400px]"
                             >
                                <div className="space-y-4">
-                                 {/* Helper to get ALL columns involved in this step */}
                                  {(() => {
                                    const colsA = getFileColumns(index === 0 ? join.fileA : 'result');
                                    const colsB = getFileColumns(join.fileB);
@@ -558,6 +580,7 @@ function App() {
                                    
                                    return (
                                      <>
+                                       {/* Drop Columns */}
                                        <div className="space-y-2">
                                          <label className="text-[10px] font-bold text-slate-500 uppercase block ml-1 underline decoration-rose-500/50">Columns to Drop</label>
                                          <div className="flex flex-wrap gap-2">
@@ -583,90 +606,76 @@ function App() {
                                          </div>
                                        </div>
                                        
+                                       {/* Rename Columns */}
                                        <div className="space-y-2">
                                          <label className="text-[10px] font-bold text-slate-500 uppercase block ml-1 underline decoration-amber-500/50">Column Renaming</label>
-                                         <div className="grid grid-cols-1 gap-2">
-                                           <div className="flex items-center gap-2">
-                                             <select 
-                                               className="glass-input !py-1.5 !text-[10px] flex-1 bg-slate-900 border border-white/10 rounded-lg text-slate-300"
-                                               onChange={(e) => {
-                                                 if (e.target.value) {
-                                                   updateTransformation(join.id, 'rename', { ...join.transformations.rename, [e.target.value]: e.target.value + "_renamed" });
-                                                   e.target.value = "";
-                                                 }
-                                               }}
-                                               value=""
-                                             >
-                                               <option value="" disabled>Select Column to Rename...</option>
-                                               {allCols.filter(c => !join.transformations.rename[c]).map(c => (
-                                                 <option key={c} value={c}>{c}</option>
-                                               ))}
-                                             </select>
+                                         <div className="space-y-2">
+                                           <CustomSelect 
+                                             placeholder="Select Column to Rename..."
+                                             options={allCols.filter(c => !join.transformations.rename[c]).map(c => ({ value: c, label: c }))}
+                                             onChange={(val) => updateTransformation(join.id, 'rename', { ...join.transformations.rename, [val]: val })}
+                                             value=""
+                                           />
+                                           <div className="grid grid-cols-1 gap-2">
+                                             {Object.entries(join.transformations.rename).map(([old, curr]) => (
+                                                <div key={old} className="flex items-center justify-between px-3 py-1.5 bg-white/5 rounded-lg border border-white/5">
+                                                   <span className="text-[10px] font-mono text-slate-400 max-w-[100px] truncate">{old}</span>
+                                                   <ArrowRight className="w-3 h-3 text-indigo-500 shrink-0" />
+                                                   <input 
+                                                     value={curr}
+                                                     className="bg-transparent text-[10px] text-white outline-none text-right placeholder-white/20 flex-1 ml-2"
+                                                     placeholder="Enter new name..."
+                                                     onChange={(e) => updateTransformation(join.id, 'rename', { ...join.transformations.rename, [old]: e.target.value })}
+                                                   />
+                                                   <button onClick={() => {
+                                                     const newRename = { ...join.transformations.rename };
+                                                     delete newRename[old];
+                                                     updateTransformation(join.id, 'rename', newRename);
+                                                   }} className="ml-2 text-rose-500/50 hover:text-rose-500">
+                                                     <X className="w-3 h-3" />
+                                                   </button>
+                                                </div>
+                                             ))}
                                            </div>
-                                           {Object.entries(join.transformations.rename).map(([old, curr]) => (
-                                              <div key={old} className="flex items-center justify-between px-3 py-1.5 bg-white/5 rounded-lg border border-white/5">
-                                                 <span className="text-[10px] font-mono text-slate-400 max-w-[100px] truncate">{old}</span>
-                                                 <ArrowRight className="w-3 h-3 text-indigo-500 shrink-0" />
-                                                 <input 
-                                                   value={curr}
-                                                   className="bg-transparent text-[10px] text-white outline-none text-right placeholder-indigo-500/50 flex-1 ml-2"
-                                                   placeholder="Rename to..."
-                                                   onChange={(e) => updateTransformation(join.id, 'rename', { ...join.transformations.rename, [old]: e.target.value })}
-                                                 />
-                                                 <button onClick={() => {
-                                                   const newRename = { ...join.transformations.rename };
-                                                   delete newRename[old];
-                                                   updateTransformation(join.id, 'rename', newRename);
-                                                 }} className="ml-2 text-rose-500/50 hover:text-rose-500">
-                                                   <X className="w-3 h-3" />
-                                                 </button>
-                                              </div>
-                                           ))}
                                          </div>
                                        </div>
                                        
+                                       {/* Type Casting */}
                                        <div className="space-y-2">
                                          <label className="text-[10px] font-bold text-slate-500 uppercase block ml-1 underline decoration-violet-500/50">Type Casting</label>
-                                         <div className="grid grid-cols-1 gap-2">
-                                            {Object.entries(join.transformations.cast).map(([col, type]) => (
-                                              <div key={col} className="flex items-center justify-between px-3 py-1.5 bg-white/5 rounded-lg border border-white/5">
-                                                 <span className="text-[10px] font-mono text-slate-400 max-w-[100px] truncate">{col}</span>
-                                                 <div className="flex items-center gap-2">
-                                                   <select 
-                                                     value={type}
-                                                     onChange={(e) => updateTransformation(join.id, 'cast', { ...join.transformations.cast, [col]: e.target.value })}
-                                                     className="bg-transparent text-[10px] text-indigo-400 outline-none border-none"
-                                                   >
-                                                     <option value="str">String</option>
-                                                     <option value="int64">Integer</option>
-                                                     <option value="float64">Float</option>
-                                                     <option value="datetime64[ns]">DateTime</option>
-                                                   </select>
-                                                   <button onClick={() => {
-                                                     const newCast = { ...join.transformations.cast };
-                                                     delete newCast[col];
-                                                     updateTransformation(join.id, 'cast', newCast);
-                                                   }} className="text-rose-500 hover:text-rose-400">
-                                                     <X className="w-3 h-3" />
-                                                   </button>
-                                                 </div>
-                                              </div>
-                                            ))}
-                                            <select 
-                                               className="glass-input !py-1.5 !text-[10px] w-full bg-slate-900 border border-white/10 rounded-lg text-slate-300 mt-2"
-                                               onChange={(e) => {
-                                                 if (e.target.value) {
-                                                   updateTransformation(join.id, 'cast', { ...join.transformations.cast, [e.target.value]: 'str' });
-                                                   e.target.value = "";
-                                                 }
-                                               }}
-                                               value=""
-                                             >
-                                               <option value="" disabled>Select Column to Cast...</option>
-                                               {allCols.filter(c => !join.transformations.cast[c]).map(c => (
-                                                 <option key={c} value={c}>{c}</option>
-                                               ))}
-                                             </select>
+                                         <div className="space-y-2">
+                                            <CustomSelect 
+                                              placeholder="Select Column to Cast..."
+                                              options={allCols.filter(c => !join.transformations.cast[c]).map(c => ({ value: c, label: c }))}
+                                              onChange={(val) => updateTransformation(join.id, 'cast', { ...join.transformations.cast, [val]: 'str' })}
+                                              value=""
+                                            />
+                                            <div className="grid grid-cols-1 gap-2">
+                                              {Object.entries(join.transformations.cast).map(([col, type]) => (
+                                                <div key={col} className="flex items-center justify-between px-3 py-1.5 bg-white/5 rounded-lg border border-white/5">
+                                                   <span className="text-[10px] font-mono text-slate-400 max-w-[100px] truncate">{col}</span>
+                                                   <div className="flex items-center gap-2">
+                                                     <select 
+                                                       value={type}
+                                                       onChange={(e) => updateTransformation(join.id, 'cast', { ...join.transformations.cast, [col]: e.target.value })}
+                                                       className="bg-slate-800 text-[10px] text-indigo-400 outline-none border border-white/5 rounded px-2 py-0.5 appearance-none hover:bg-slate-700 transition-colors cursor-pointer"
+                                                     >
+                                                       <option value="str">String</option>
+                                                       <option value="int64">Integer</option>
+                                                       <option value="float64">Float</option>
+                                                       <option value="datetime64[ns]">DateTime</option>
+                                                     </select>
+                                                     <button onClick={() => {
+                                                       const newCast = { ...join.transformations.cast };
+                                                       delete newCast[col];
+                                                       updateTransformation(join.id, 'cast', newCast);
+                                                     }} className="text-rose-500/50 hover:text-rose-500 ml-1">
+                                                       <X className="w-3 h-3" />
+                                                     </button>
+                                                   </div>
+                                                </div>
+                                              ))}
+                                            </div>
                                          </div>
                                        </div>
                                      </>
@@ -675,7 +684,7 @@ function App() {
                                </div>
                             </motion.div>
                          )}
-                       </AnimatePresence>
+                        </AnimatePresence>
                     </div>
                   </div>
                 </motion.div>
