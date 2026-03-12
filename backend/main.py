@@ -147,16 +147,26 @@ async def join_data(
                 for col, dtype in transforms.cast.items():
                     if col in merged_df.columns:
                         try:
-                            merged_df[col] = merged_df[col].astype(dtype)
-                        except: pass # Silently fail for now
+                            # Handle datetime strings specifically if needed
+                            if "datetime" in dtype:
+                                merged_df[col] = pd.to_datetime(merged_df[col], errors='coerce')
+                            else:
+                                merged_df[col] = merged_df[col].astype(dtype)
+                        except Exception as cast_err:
+                            print(f"Casting error for column {col} to {dtype}: {str(cast_err)}")
+                            # Optional: raise error if casting is critical
             
             if transforms.rename:
-                merged_df = merged_df.rename(columns=transforms.rename)
+                # Filter to only existing columns to prevent pandas errors
+                valid_renames = {old: new for old, new in transforms.rename.items() if old in merged_df.columns}
+                if valid_renames:
+                    merged_df = merged_df.rename(columns=valid_renames)
             
             if transforms.drop:
                 # Only drop columns that exist
                 existing_drops = [c for c in transforms.drop if c in merged_df.columns]
-                merged_df = merged_df.drop(columns=existing_drops)
+                if existing_drops:
+                    merged_df = merged_df.drop(columns=existing_drops)
         
         # Calculate Health Metrics
         metrics = {
