@@ -97,8 +97,20 @@ function App() {
 
   // Multi-Step Join State
   const [joins, setJoins] = useState([
-    { id: crypto.randomUUID(), fileA: '', keyA: '', fileB: '', keyB: '', type: 'inner' }
+    { 
+      id: crypto.randomUUID(), 
+      fileA: '', 
+      keysA: [''], 
+      fileB: '', 
+      keysB: [''], 
+      type: 'inner', 
+      suggestions: [],
+      transformations: { drop: [], rename: {}, cast: {} }
+    }
   ]);
+
+  const [metrics, setMetrics] = useState(null); // Health metrics for final result
+  const [showTransforms, setShowTransforms] = useState({}); // Track expanded transforms by joinId
 
   const [previewData, setPreviewData] = useState(null);
   const [finalResultId, setFinalResultId] = useState(null);
@@ -130,9 +142,11 @@ function App() {
     setJoins([...joins, { 
       id: crypto.randomUUID(), 
       fileB: '', 
-      keyB: '', 
-      keyA: '', 
-      type: 'inner' 
+      keysB: [''], 
+      keysA: [''], 
+      type: 'inner',
+      suggestions: [],
+      transformations: { drop: [], rename: {}, cast: {} }
     }]);
   };
 
@@ -141,8 +155,85 @@ function App() {
     setJoins(joins.filter(j => j.id !== id));
   };
 
-  const updateJoin = (id, field, value) => {
-    setJoins(joins.map(j => j.id === id ? { ...j, [field]: value } : j));
+  const updateJoin = async (id, field, value) => {
+    setJoins(prevJoins => {
+      const newJoins = prevJoins.map(j => j.id === id ? { ...j, [field]: value } : j);
+      
+      // Auto-fetch suggestions if files are selected
+      const join = newJoins.find(j => j.id === id);
+      if ((field === 'fileA' || field === 'fileB') && join.fileA && join.fileB) {
+        fetchSuggestions(id, join.fileA, join.fileB);
+      }
+      return newJoins;
+    });
+  };
+
+  const fetchSuggestions = async (joinId, fileA, fileB) => {
+    try {
+      const resp = await axios.post(`${API_BASE}/analyze-schema?file_a_id=${fileA}&file_b_id=${fileB}`);
+      setJoins(prev => prev.map(j => j.id === joinId ? { ...j, suggestions: resp.data.suggestions } : j));
+    } catch (err) {
+      console.error("Suggestion fetch failed", err);
+    }
+  };
+
+  const addKeyPair = (joinId) => {
+    setJoins(prev => prev.map(j => j.id === joinId ? { ...j, keysA: [...j.keysA, ''], keysB: [...j.keysB, ''] } : j));
+  };
+
+  const removeKeyPair = (joinId, index) => {
+    setJoins(prev => prev.map(j => j.id === joinId ? { 
+      ...j, 
+      keysA: j.keysA.filter((_, i) => i !== index),
+      keysB: j.keysB.filter((_, i) => i !== index)
+    } : j));
+  };
+
+  const updateKey = (joinId, side, index, value) => {
+    setJoins(prev => prev.map(j => j.id === joinId ? {
+      ...j,
+      [side]: j[side].map((k, i) => i === index ? value : k)
+    } : j));
+  };
+
+  const updateTransformation = (joinId, field, value) => {
+    setJoins(prev => prev.map(j => j.id === joinId ? {
+      ...j,
+      transformations: { ...j.transformations, [field]: value }
+    } : j));
+  };
+
+  const saveProject = () => {
+    const project = {
+      version: '2.0',
+      timestamp: new Date().toISOString(),
+      joins: joins.map(({ suggestions, ...rest }) => rest), // Don't save transient suggestions
+    };
+    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `pipeline_${new Date().getTime()}.forge`;
+    link.click();
+    setSuccess("Project configuration exported successfully.");
+  };
+
+  const loadProject = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const project = JSON.parse(event.target.result);
+        if (project.joins) {
+          setJoins(project.joins.map(j => ({ ...j, suggestions: [] })));
+          setSuccess("Project configuration loaded.");
+        }
+      } catch (err) {
+        setError("Failed to load project file.");
+      }
+    };
+    reader.readAsText(file);
   };
 
   const executeChain = async () => {
@@ -158,18 +249,30 @@ function App() {
       for (let i = 0; i < joins.length; i++) {
         const step = joins[i];
         
-        if (i === 0 && (!step.fileA || !step.fileB || !step.keyA || !step.keyB)) {
-          throw new Error(`Step 1: Please select both files and keys`);
+        if (i === 0 && (!step.fileA || !step.fileB || step.keysA.some(k => !k) || step.keysB.some(k => !k))) {
+          throw new Error(`Step 1: Please select both files and all keys`);
         }
-        if (i > 0 && (!step.fileB || !step.keyA || !step.keyB)) {
-          throw new Error(`Step ${i + 1}: Please select file and keys`);
+        if (i > 0 && (!step.fileB || step.keysA.some(k => !k) || step.keysB.some(k => !k))) {
+          throw new Error(`Step ${i + 1}: Please select file and all keys`);
         }
 
         const leftId = i === 0 ? step.fileA : currentResultId;
-        const resp = await axios.post(`${API_BASE}/join?file_a_id=${leftId}&file_b_id=${step.fileB}&key_a=${step.keyA}&key_b=${step.keyB}&join_type=${step.type}`);
+        
+        // Construct query parameters for multiple keys
+        const params = new URLSearchParams();
+        params.append('file_a_id', leftId);
+        params.append('file_b_id', step.fileB);
+        step.keysA.forEach(k => params.append('keys_a', k));
+        step.keysB.forEach(k => params.append('keys_b', k));
+        params.append('join_type', step.type);
+
+        const resp = await axios.post(`${API_BASE}/join?${params.toString()}`, step.transformations);
         
         currentResultId = resp.data.result_id;
         lastCols = resp.data.columns;
+        if (i === joins.length - 1) {
+          setMetrics(resp.data.metrics);
+        }
       }
 
       setFinalResultId(currentResultId);
@@ -203,38 +306,42 @@ function App() {
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-fuchsia-500/10 blur-[120px] rounded-full" />
       </div>
 
-      <header className="max-w-7xl mx-auto mb-12 flex flex-col md:flex-row items-center justify-between gap-6">
-        <motion.div 
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="space-y-1"
-        >
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-500/30">
-              <Sparkles className="w-6 h-6 text-white" />
-            </div>
-            <h1 className="text-3xl font-black tracking-tight text-white drop-shadow-sm">
-              Forge<span className="text-indigo-400">Join</span>
-            </h1>
-          </div>
-          <p className="text-slate-400 font-medium text-sm">No-code data orchestration & intelligent merging.</p>
-        </motion.div>
-
+      <header className="max-w-7xl mx-auto mb-12 flex flex-col md:flex-row items-center justify-between gap-6 px-4">
         <div className="flex items-center gap-4">
+          <div className="p-3 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-600/20">
+            <Sparkles className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black tracking-tight bg-linear-to-r from-white to-white/60 bg-clip-text text-transparent">ForgeJoin Pro</h1>
+            <p className="text-slate-500 text-xs font-bold uppercase tracking-[0.3em]">Pipeline Orchestrator v2.0</p>
+          </div>
+        </div>
+        
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+             <label className="cursor-pointer glass-button !py-2 !px-4 text-[10px] bg-white/5 hover:bg-white/10 flex items-center gap-2 border border-white/10">
+                <Upload className="w-3.5 h-3.5" /> Open Project
+                <input type="file" className="hidden" accept=".forge" onChange={loadProject} />
+             </label>
+             <button onClick={saveProject} className="glass-button !py-2 !px-4 text-[10px] bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-600/20 flex items-center gap-2">
+                <Download className="w-3.5 h-3.5" /> Save Configuration
+             </button>
+          </div>
+          
           <motion.div 
             initial={{ opacity: 0, scale: 0.9 }} 
             animate={{ opacity: 1, scale: 1 }}
-            className="flex items-center gap-2 px-4 py-2 bg-white/5 rounded-full border border-white/10 backdrop-blur-md"
+            className="hidden md:flex items-center gap-2 px-4 py-2 bg-white/5 rounded-full border border-white/10 backdrop-blur-md"
           >
             <Database className="w-4 h-4 text-emerald-400" />
-            <span className="text-sm font-semibold">{files.length} Datasets Loaded</span>
+            <span className="text-sm font-semibold">{files.length} Datasets</span>
           </motion.div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-12 gap-8">
         {/* Sidebar: Pipeline Builder */}
-        <div className="xl:col-span-4 space-y-6">
+        <div className="xl:col-span-4 space-y-6 h-fit xl:sticky xl:top-8 overflow-y-auto xl:max-h-[calc(100vh-4rem)] pr-2 custom-scrollbar">
           {/* Upload Card */}
           <section className="glass-card p-6 border-white/10">
             <div className="flex items-center justify-between mb-5">
@@ -315,7 +422,7 @@ function App() {
                   </div>
 
                   {/* Join Block */}
-                  <div className="space-y-5 p-5 bg-white/5 rounded-2xl border border-white/5">
+                  <div className="space-y-6 p-5 bg-white/5 rounded-2xl border border-white/5 relative">
                     {index === 0 ? (
                       <CustomSelect 
                         label="File A (Base)"
@@ -331,51 +438,249 @@ function App() {
                       </div>
                     )}
 
-                    <div className="grid grid-cols-2 gap-3">
+                    {/* Suggestions Box */}
+                    {join.suggestions && join.suggestions.length > 0 && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-2"
+                      >
+                         <div className="flex items-center gap-2 text-[10px] font-black text-amber-500 uppercase tracking-widest">
+                           <Sparkles className="w-3 h-3" /> Intelligent Map Suggesions
+                         </div>
+                         <div className="flex flex-wrap gap-2">
+                            {join.suggestions.map((s, idx) => (
+                              <button 
+                                key={idx}
+                                onClick={() => {
+                                  // Apply suggestion to the first key pair
+                                  updateKey(join.id, 'keysA', 0, s.key_a);
+                                  updateKey(join.id, 'keysB', 0, s.key_b);
+                                }}
+                                className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg text-[9px] font-bold text-amber-200 border border-amber-500/30 transition-all"
+                              >
+                                {s.key_a} ✨ {s.key_b}
+                              </button>
+                            ))}
+                         </div>
+                      </motion.div>
+                    )}
+
+                    <div className="space-y-4">
+                      {join.keysA.map((_, kIdx) => (
+                        <div key={kIdx} className="relative p-4 bg-white/5 border border-white/5 rounded-xl space-y-4">
+                          {join.keysA.length > 1 && (
+                            <button 
+                              onClick={() => removeKeyPair(join.id, kIdx)}
+                              className="absolute -top-2 -right-2 p-1 bg-rose-500 text-white rounded-full shadow-lg hover:scale-110 transition-transform"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                          <div className="grid grid-cols-2 gap-3">
+                            <CustomSelect 
+                              label={`Key ${kIdx + 1} (Left)`}
+                              value={join.keysA[kIdx]}
+                              options={(index === 0 ? getFileColumns(join.fileA) : activeColumns).map(col => ({ value: col, label: col }))}
+                              onChange={(val) => updateKey(join.id, 'keysA', kIdx, val)}
+                              placeholder="Select Key"
+                              disabled={index === 0 && !join.fileA}
+                            />
+                            <CustomSelect 
+                              label={`Key ${kIdx + 1} (Right)`}
+                              value={join.keysB[kIdx]}
+                              options={getFileColumns(join.fileB).map(col => ({ value: col, label: col }))}
+                              onChange={(val) => updateKey(join.id, 'keysB', kIdx, val)}
+                              placeholder="Select Key"
+                              disabled={!join.fileB}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                      
+                      <button 
+                        onClick={() => addKeyPair(join.id)}
+                        className="w-full py-2 border border-dashed border-white/20 rounded-xl text-[10px] font-bold text-slate-500 hover:border-indigo-500/50 hover:text-indigo-400 transition-all uppercase tracking-widest"
+                      >
+                        + Add Join Key Pair
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3">
                       <CustomSelect 
-                        label="Join Key (Left)"
-                        value={join.keyA}
-                        options={(index === 0 ? getFileColumns(join.fileA) : activeColumns).map(col => ({ value: col, label: col }))}
-                        onChange={(val) => updateJoin(join.id, 'keyA', val)}
-                        placeholder="Select Key"
-                        disabled={index === 0 && !join.fileA}
-                      />
-                      <CustomSelect 
-                        label="Join Type"
+                        label="Join Strategy"
                         value={join.type}
                         options={[
-                          { value: 'inner', label: 'Inner Join' },
-                          { value: 'left', label: 'Left Join' },
-                          { value: 'right', label: 'Right Join' },
-                          { value: 'outer', label: 'Outer Join' }
+                          { value: 'inner', label: 'Inner Join (Intersect)' },
+                          { value: 'left', label: 'Left Join (Keep A)' },
+                          { value: 'right', label: 'Right Join (Keep B)' },
+                          { value: 'outer', label: 'Outer Join (Find All)' }
                         ]}
                         onChange={(val) => updateJoin(join.id, 'type', val)}
-                        placeholder="Join Type"
+                        placeholder="Join Strategy"
                       />
                     </div>
 
-                    <div className="border-t border-white/10 pt-4 mt-2">
+                    <div className="border-t border-white/10 pt-4">
                       <CustomSelect 
-                        label="Combine with File"
+                        label="Target Dataset"
                         value={join.fileB}
-                        options={files.filter(f => f.id !== join.fileA).map(f => ({ value: f.id, label: f.name }))}
+                        options={files.filter(f => f.id !== (index === 0 ? join.fileA : '')).map(f => ({ value: f.id, label: f.name }))}
                         onChange={(val) => updateJoin(join.id, 'fileB', val)}
                         placeholder="Select Target Dataset"
                       />
                     </div>
 
-                    <CustomSelect 
-                      label="Join Key (Right)"
-                      value={join.keyB}
-                      options={getFileColumns(join.fileB).map(col => ({ value: col, label: col }))}
-                      onChange={(val) => updateJoin(join.id, 'keyB', val)}
-                      placeholder="Select Key"
-                      disabled={!join.fileB}
-                    />
+                    {/* Transformations Toggle */}
+                    <div className="space-y-3 pt-2">
+                       <button 
+                        onClick={() => setShowTransforms(prev => ({ ...prev, [join.id]: !prev[join.id] }))}
+                        className="flex items-center gap-2 text-[10px] font-bold text-indigo-400 uppercase tracking-widest hover:text-indigo-300 transition-colors"
+                       >
+                         {showTransforms[join.id] ? <X className="w-3 h-3" /> : <Settings className="w-3 h-3" />}
+                         {showTransforms[join.id] ? 'Hide' : 'Advanced'} Transformations
+                       </button>
+
+                       <AnimatePresence>
+                         {showTransforms[join.id] && (
+                           <motion.div 
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="bg-slate-900/50 rounded-xl p-4 border border-white/5 space-y-4 overflow-y-auto max-h-[400px]"
+                           >
+                              <div className="space-y-4">
+                                <div className="space-y-2">
+                                  <label className="text-[10px] font-bold text-slate-500 uppercase block ml-1 underline decoration-indigo-500/50">Columns to Drop</label>
+                                  <div className="flex flex-wrap gap-2">
+                                    {getFileColumns(join.fileB).slice(0, 10).map(col => (
+                                      <button 
+                                        key={col}
+                                        onClick={() => {
+                                          const drops = join.transformations.drop.includes(col) 
+                                            ? join.transformations.drop.filter(d => d !== col)
+                                            : [...join.transformations.drop, col];
+                                          updateTransformation(join.id, 'drop', drops);
+                                        }}
+                                        className={cn(
+                                          "px-2 py-1 rounded-lg text-[9px] font-bold border transition-all",
+                                          join.transformations.drop.includes(col)
+                                            ? "bg-rose-500/20 border-rose-500/50 text-rose-300"
+                                            : "bg-white/5 border-white/10 text-slate-400 hover:border-white/20"
+                                        )}
+                                      >
+                                        -{col}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                
+                                <div className="space-y-2">
+                                  <label className="text-[10px] font-bold text-slate-500 uppercase block ml-1 underline decoration-amber-500/50">Column Renaming</label>
+                                  <div className="grid grid-cols-1 gap-2">
+                                    <div className="flex items-center gap-2">
+                                      <input 
+                                        type="text" 
+                                        placeholder="Original Name"
+                                        className="glass-input !py-1.5 !text-[10px] flex-1"
+                                        onBlur={(e) => {
+                                          if (e.target.value) {
+                                            updateTransformation(join.id, 'rename', { ...join.transformations.rename, [e.target.value]: '' });
+                                          }
+                                        }}
+                                      />
+                                      <ArrowRight className="w-3 h-3 text-slate-600" />
+                                      <input 
+                                        type="text" 
+                                        placeholder="New Name"
+                                        className="glass-input !py-1.5 !text-[10px] flex-1"
+                                      />
+                                    </div>
+                                    {Object.entries(join.transformations.rename).map(([old, curr]) => (
+                                       <div key={old} className="flex items-center justify-between px-3 py-1.5 bg-white/5 rounded-lg border border-white/5">
+                                          <span className="text-[10px] font-mono text-slate-400">{old}</span>
+                                          <ArrowRight className="w-3 h-3 text-indigo-500" />
+                                          <input 
+                                            defaultValue={curr}
+                                            className="bg-transparent text-[10px] text-white outline-none text-right placeholder-indigo-500/50"
+                                            placeholder="Rename to..."
+                                            onBlur={(e) => updateTransformation(join.id, 'rename', { ...join.transformations.rename, [old]: e.target.value })}
+                                          />
+                                       </div>
+                                    ))}
+                                  </div>
+                                </div>
+                                
+                                <div className="space-y-2">
+                                  <label className="text-[10px] font-bold text-slate-500 uppercase block ml-1 underline decoration-violet-500/50">Type Casting</label>
+                                  <div className="grid grid-cols-1 gap-2">
+                                     {Object.entries(join.transformations.cast).map(([col, type]) => (
+                                       <div key={col} className="flex items-center justify-between px-3 py-1.5 bg-white/5 rounded-lg border border-white/5">
+                                          <span className="text-[10px] font-mono text-slate-400">{col}</span>
+                                          <div className="flex items-center gap-2">
+                                            <select 
+                                              value={type}
+                                              onChange={(e) => updateTransformation(join.id, 'cast', { ...join.transformations.cast, [col]: e.target.value })}
+                                              className="bg-transparent text-[10px] text-indigo-400 outline-none border-none"
+                                            >
+                                              <option value="str">String</option>
+                                              <option value="int64">Integer</option>
+                                              <option value="float64">Float</option>
+                                              <option value="datetime64[ns]">DateTime</option>
+                                            </select>
+                                            <button onClick={() => {
+                                              const newCast = { ...join.transformations.cast };
+                                              delete newCast[col];
+                                              updateTransformation(join.id, 'cast', newCast);
+                                            }} className="text-rose-500 hover:text-rose-400">
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                       </div>
+                                     ))}
+                                     <CustomSelect 
+                                        placeholder="Add Column to Cast..."
+                                        options={getFileColumns(join.fileB).map(c => ({ value: c, label: c }))}
+                                        onChange={(val) => updateTransformation(join.id, 'cast', { ...join.transformations.cast, [val]: 'str' })}
+                                        className="!mt-2"
+                                     />
+                                  </div>
+                                </div>
+                              </div>
+                           </motion.div>
+                         )}
+                       </AnimatePresence>
+                    </div>
                   </div>
                 </motion.div>
               ))}
             </div>
+
+            {/* Metrics Dashboard */}
+            {metrics && (
+              <motion.div 
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="grid grid-cols-2 gap-3 mt-8"
+              >
+                {[
+                  { label: "Overlap Rate", value: `${metrics.match_rate_a}%`, sub: "Base Match", color: "text-indigo-400" },
+                  { label: "Coverage", value: `${metrics.match_rate_b}%`, sub: "Target Match", color: "text-violet-400" },
+                  { label: "Nulls", value: metrics.null_count, sub: "Data Gaps", color: "text-amber-400" },
+                  { label: "Dupes", value: metrics.duplicate_count, sub: "Redundant", color: "text-rose-400" }
+                ].map((m, i) => (
+                  <div key={i} className="bg-white/5 border border-white/5 rounded-2xl p-4 group hover:border-white/10 transition-all flex items-center justify-between">
+                    <div>
+                      <span className="text-[8px] font-black uppercase text-slate-500 tracking-widest block mb-0.5">{m.label}</span>
+                      <div className={`text-lg font-bold ${m.color}`}>
+                        {m.value}
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-slate-600 italic font-medium">{m.sub}</p>
+                  </div>
+                ))}
+              </motion.div>
+            )}
 
             <button
               onClick={executeChain}

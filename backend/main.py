@@ -56,37 +56,99 @@ async def get_columns(file_id: str):
         raise HTTPException(status_code=404, detail="File not found")
     return {"columns": storage[file_id].columns.tolist()}
 
+from thefuzz import process
+
+@app.post("/analyze-schema")
+async def analyze_schema(file_a_id: str, file_b_id: str):
+    if file_a_id not in storage or file_b_id not in storage:
+        raise HTTPException(status_code=404, detail="One or more files not found")
+    
+    cols_a = storage[file_a_id].columns.tolist()
+    cols_b = storage[file_b_id].columns.tolist()
+    
+    suggestions = []
+    for col_a in cols_a:
+        # Find best match in B for this column in A
+        match, score = process.extractOne(col_a, cols_b)
+        if score > 80: # High confidence threshold
+            suggestions.append({"key_a": col_a, "key_b": match, "confidence": score})
+            
+    return {"suggestions": suggestions}
+
+from pydantic import BaseModel
+
+class JoinTransformations(BaseModel):
+    drop: Optional[List[str]] = None
+    rename: Optional[Dict[str, str]] = None
+    cast: Optional[Dict[str, str]] = None
+
 @app.post("/join")
 async def join_data(
     file_a_id: str,
     file_b_id: str,
-    key_a: str,
-    key_b: str,
-    join_type: str = "inner"
+    keys_a: List[str] = Query(...),
+    keys_b: List[str] = Query(...),
+    join_type: str = "inner",
+    transforms: Optional[JoinTransformations] = None
 ):
     if file_a_id not in storage or file_b_id not in storage:
         raise HTTPException(status_code=404, detail="One or more files not found")
     
+    if len(keys_a) != len(keys_b):
+        raise HTTPException(status_code=400, detail="Keys count mismatch between File A and File B")
+    
     df_a = storage[file_a_id].copy()
     df_b = storage[file_b_id].copy()
     
-    if key_a not in df_a.columns or key_b not in df_b.columns:
-        raise HTTPException(status_code=400, detail="Join keys not found in respective files")
+    # Check all keys exist
+    for ka in keys_a:
+        if ka not in df_a.columns:
+            raise HTTPException(status_code=400, detail=f"Key {ka} not found in File A")
+    for kb in keys_b:
+        if kb not in df_b.columns:
+            raise HTTPException(status_code=400, detail=f"Key {kb} not found in File B")
     
-    # Cast join keys to string to prevent type mismatch failures
-    df_a[key_a] = df_a[key_a].astype(str)
-    df_b[key_b] = df_b[key_b].astype(str)
+    # Cast join keys to string
+    for ka in keys_a:
+        df_a[ka] = df_a[ka].astype(str)
+    for kb in keys_b:
+        df_b[kb] = df_b[kb].astype(str)
     
     try:
         merged_df = pd.merge(
             df_a, 
             df_b, 
-            left_on=key_a, 
-            right_on=key_b, 
+            left_on=keys_a, 
+            right_on=keys_b, 
             how=join_type,
             suffixes=('_fileA', '_fileB')
         )
         
+        # Apply Transformations
+        if transforms:
+            if transforms.cast:
+                for col, dtype in transforms.cast.items():
+                    if col in merged_df.columns:
+                        try:
+                            merged_df[col] = merged_df[col].astype(dtype)
+                        except: pass # Silently fail for now
+            
+            if transforms.rename:
+                merged_df = merged_df.rename(columns=transforms.rename)
+            
+            if transforms.drop:
+                # Only drop columns that exist
+                existing_drops = [c for c in transforms.drop if c in merged_df.columns]
+                merged_df = merged_df.drop(columns=existing_drops)
+        
+        # Calculate Health Metrics
+        metrics = {
+            "match_rate_a": round(len(merged_df) / len(df_a) * 100, 2) if len(df_a) > 0 else 0,
+            "match_rate_b": round(len(merged_df) / len(df_b) * 100, 2) if len(df_b) > 0 else 0,
+            "null_count": int(merged_df.isnull().sum().sum()),
+            "duplicate_count": int(merged_df.duplicated().sum())
+        }
+
         # Store the result for preview and download
         result_id = str(uuid.uuid4())
         storage[result_id] = merged_df
@@ -94,7 +156,8 @@ async def join_data(
         return {
             "result_id": result_id,
             "row_count": len(merged_df),
-            "columns": merged_df.columns.tolist()
+            "columns": merged_df.columns.tolist(),
+            "metrics": metrics
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Join failed: {str(e)}")
