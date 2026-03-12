@@ -59,7 +59,7 @@ async def get_columns(file_id: str):
 from thefuzz import process
 
 @app.post("/analyze-schema")
-async def analyze_schema(file_a_id: str, file_b_id: str):
+async def analyze_schema(file_a_id: str = Query(...), file_b_id: str = Query(...)):
     if file_a_id not in storage or file_b_id not in storage:
         raise HTTPException(status_code=404, detail="One or more files not found")
     
@@ -84,18 +84,18 @@ class JoinTransformations(BaseModel):
 
 @app.post("/join")
 async def join_data(
-    file_a_id: str,
-    file_b_id: str,
-    keys_a: List[str] = Query(...),
-    keys_b: List[str] = Query(...),
-    join_type: str = "inner",
+    file_a_id: str = Query(...),
+    file_b_id: str = Query(...),
+    keys_a: Optional[List[str]] = Query(None),
+    keys_b: Optional[List[str]] = Query(None),
+    join_type: str = Query("inner"),
     transforms: Optional[JoinTransformations] = None
 ):
     if file_a_id not in storage or file_b_id not in storage:
         raise HTTPException(status_code=404, detail="One or more files not found")
     
-    if len(keys_a) != len(keys_b):
-        raise HTTPException(status_code=400, detail="Keys count mismatch between File A and File B")
+    if join_type != "append" and (not keys_a or not keys_b or len(keys_a) != len(keys_b)):
+        raise HTTPException(status_code=400, detail="Keys missing or count mismatch between File A and File B")
     
     df_a = storage[file_a_id].copy()
     df_b = storage[file_b_id].copy()
