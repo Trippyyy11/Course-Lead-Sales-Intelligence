@@ -100,29 +100,46 @@ async def join_data(
     df_a = storage[file_a_id].copy()
     df_b = storage[file_b_id].copy()
     
-    # Check all keys exist
-    for ka in keys_a:
-        if ka not in df_a.columns:
-            raise HTTPException(status_code=400, detail=f"Key {ka} not found in File A")
-    for kb in keys_b:
-        if kb not in df_b.columns:
-            raise HTTPException(status_code=400, detail=f"Key {kb} not found in File B")
-    
-    # Cast join keys to string
-    for ka in keys_a:
-        df_a[ka] = df_a[ka].astype(str)
-    for kb in keys_b:
-        df_b[kb] = df_b[kb].astype(str)
+    # Check all keys exist if not append
+    if join_type != "append":
+        for ka in keys_a:
+            if ka not in df_a.columns:
+                raise HTTPException(status_code=400, detail=f"Key {ka} not found in File A")
+        for kb in keys_b:
+            if kb not in df_b.columns:
+                raise HTTPException(status_code=400, detail=f"Key {kb} not found in File B")
+        
+        # Cast join keys to string
+        for ka in keys_a:
+            df_a[ka] = df_a[ka].astype(str)
+        for kb in keys_b:
+            df_b[kb] = df_b[kb].astype(str)
     
     try:
-        merged_df = pd.merge(
-            df_a, 
-            df_b, 
-            left_on=keys_a, 
-            right_on=keys_b, 
-            how=join_type,
-            suffixes=('_fileA', '_fileB')
-        )
+        if join_type == "append":
+            # Append rows from both files using only the shared columns
+            common_columns = [col for col in df_a.columns if col in df_b.columns]
+            if not common_columns:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No common columns found to append on. Please ensure files share at least one column name."
+                )
+            merged_df = pd.concat(
+                [
+                    df_a[common_columns].reset_index(drop=True),
+                    df_b[common_columns].reset_index(drop=True),
+                ],
+                ignore_index=True,
+            )
+        else:
+            merged_df = pd.merge(
+                df_a, 
+                df_b, 
+                left_on=keys_a, 
+                right_on=keys_b, 
+                how=join_type,
+                suffixes=('_fileA', '_fileB')
+            )
         
         # Apply Transformations
         if transforms:

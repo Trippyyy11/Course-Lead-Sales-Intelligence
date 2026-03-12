@@ -514,7 +514,8 @@ function App() {
                           { value: 'inner', label: 'Inner Join (Intersect)' },
                           { value: 'left', label: 'Left Join (Keep A)' },
                           { value: 'right', label: 'Right Join (Keep B)' },
-                          { value: 'outer', label: 'Outer Join (Find All)' }
+                          { value: 'outer', label: 'Outer Join (Find All)' },
+                          { value: 'append', label: 'Append (Merge Same Columns)' }
                         ]}
                         onChange={(val) => updateJoin(join.id, 'type', val)}
                         placeholder="Join Strategy"
@@ -748,7 +749,7 @@ function App() {
 
             <div className="flex-1 relative">
               {!previewData ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 border border-white/5 rounded-3xl bg-white/[0.02] shadow-inner">
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 border border-slate-700/80 rounded-3xl bg-slate-900/70 shadow-[0_0_40px_rgba(15,23,42,0.9)]">
                   <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-4 text-white/10">
                     <Database className="w-10 h-10" />
                   </div>
@@ -761,24 +762,33 @@ function App() {
                 <motion.div 
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="table-glass h-full border-white/5 shadow-2xl"
+                  className="h-full rounded-3xl border border-slate-700/80 bg-[radial-gradient(circle_at_top,_rgba(129,140,248,0.18),_transparent_55%),_radial-gradient(circle_at_bottom,_rgba(8,47,73,0.9),_rgba(15,23,42,1))] shadow-[0_0_40px_rgba(15,23,42,0.9)] overflow-hidden"
                 >
                   <div className="overflow-auto max-h-[500px]">
-                    <table className="w-full border-collapse text-left">
-                      <thead>
-                        <tr className="bg-white/5 border-b border-white/10 sticky top-0 z-10 backdrop-blur-md">
+                    <table className="w-full border-collapse text-left text-slate-200">
+                      <thead className="bg-slate-900/80 backdrop-blur-md">
+                        <tr className="border-b border-slate-700/80">
                           {previewData.columns.map(col => (
-                            <th key={col} className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] whitespace-nowrap">
+                            <th
+                              key={col}
+                              className="px-6 py-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.25em] whitespace-nowrap"
+                            >
                               {col}
                             </th>
                           ))}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-white/[0.03]">
+                      <tbody className="divide-y divide-slate-800/80">
                         {previewData.data.map((row, i) => (
-                          <tr key={i} className="group hover:bg-white/[0.02] transition-colors">
+                          <tr
+                            key={i}
+                            className="group transition-colors even:bg-slate-900/40 hover:bg-slate-800/60"
+                          >
                             {previewData.columns.map(col => (
-                              <td key={`${i}-${col}`} className="px-6 py-4 text-xs font-medium text-slate-400 group-hover:text-slate-200 transition-colors whitespace-nowrap">
+                              <td
+                                key={`${i}-${col}`}
+                                className="px-6 py-3 text-xs font-medium text-slate-300 group-hover:text-slate-50 transition-colors whitespace-nowrap"
+                              >
                                 {String(row[col])}
                               </td>
                             ))}
@@ -787,8 +797,8 @@ function App() {
                       </tbody>
                     </table>
                   </div>
-                  <div className="p-4 bg-white/5 border-t border-white/5 text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center">
-                    Top 50 Sample Rows
+                  <div className="p-4 bg-slate-900/80 border-t border-slate-700/80 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">
+                    Top 50 Sample Rows • Dark Preview
                   </div>
                 </motion.div>
               )}
