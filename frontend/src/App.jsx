@@ -56,7 +56,7 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className="absolute z-50 w-full mt-2 glass-card p-2 border-white/10 max-h-60 overflow-auto shadow-3xl left-0"
+                className="absolute z-50 w-full mt-2 dropdown-menu p-1.5 border-white/10 max-h-64 overflow-auto shadow-2xl left-0"
               >
                 {options.length === 0 ? (
                   <div className="px-4 py-3 text-xs text-slate-500 italic text-center">No options available</div>
@@ -69,10 +69,10 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
                         setIsOpen(false);
                       }}
                       className={cn(
-                        "w-full text-left px-4 py-2.5 rounded-xl text-xs transition-colors mb-1 last:mb-0",
+                        "w-full text-left px-4 py-3 rounded-xl text-xs transition-all mb-1 last:mb-0",
                         value === opt.value 
                           ? "bg-indigo-600 text-white font-bold" 
-                          : "text-slate-300 hover:bg-white/5 hover:text-white"
+                          : "text-slate-300 hover:bg-white/10 hover:text-white hover:translate-x-1"
                       )}
                     >
                       {opt.label}

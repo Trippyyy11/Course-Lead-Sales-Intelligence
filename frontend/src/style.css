@@ -43,6 +43,10 @@ body {
   @apply bg-white/5 border border-white/10 rounded-2xl overflow-hidden backdrop-blur-md;
 }
 
+.dropdown-menu {
+  @apply bg-[#1e293b] border border-white/20 rounded-2xl shadow-2xl;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
