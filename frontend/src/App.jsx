@@ -21,19 +21,40 @@ const API_BASE = 'http://localhost:8000';
 function CustomSelect({ label, value, options, onChange, placeholder, disabled, className }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
-  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0, position: 'bottom' });
   const selectedOption = options.find(opt => opt.value === value);
 
   useEffect(() => {
-    if (isOpen && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      setCoords({
-        top: rect.bottom + window.scrollY,
-        left: rect.left + window.scrollX,
-        width: rect.width
-      });
+    const updatePosition = () => {
+      if (isOpen && containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const menuHeight = Math.min(options.length * 48 + 20, 256);
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const spaceAbove = rect.top;
+        
+        // Flip if not enough space below AND there is more space above
+        const shouldFlip = spaceBelow < menuHeight + 20 && spaceAbove > spaceBelow;
+
+        setCoords({
+          top: rect.top,
+          bottom: rect.bottom,
+          left: rect.left,
+          width: rect.width,
+          position: shouldFlip ? 'top' : 'bottom'
+        });
+      }
+    };
+
+    if (isOpen) {
+      updatePosition();
+      window.addEventListener('scroll', () => setIsOpen(false), { once: true });
+      window.addEventListener('resize', updatePosition);
     }
-  }, [isOpen]);
+
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [isOpen, options.length]);
 
   const menuContent = (
     <AnimatePresence>
@@ -43,14 +64,16 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
           <div className="fixed inset-0 z-[9998]" onClick={() => setIsOpen(false)} />
           
           <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
+            initial={{ opacity: 0, scale: 0.95, y: coords.position === 'bottom' ? -10 : 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: coords.position === 'bottom' ? -10 : 10 }}
             className="fixed z-[9999] dropdown-menu p-1.5 border-white/10 max-h-64 overflow-auto shadow-2xl"
             style={{
-              top: coords.top + 8,
+              top: coords.position === 'bottom' ? coords.bottom + 4 : 'auto',
+              bottom: coords.position === 'top' ? (window.innerHeight - coords.top) + 4 : 'auto',
               left: coords.left,
-              width: coords.width
+              width: coords.width,
+              transformOrigin: coords.position === 'bottom' ? 'top' : 'bottom'
             }}
           >
             {options.length === 0 ? (
