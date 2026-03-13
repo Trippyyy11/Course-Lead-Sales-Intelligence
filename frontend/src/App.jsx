@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Upload, Table, Download, Settings, FileText, 
-  AlertCircle, CheckCircle2, Plus, Trash2, 
+import {
+  Upload, Table, Download, Settings, FileText,
+  AlertCircle, CheckCircle2, Plus, Trash2,
   ArrowRight, Layers, Sparkles, Database, X
 } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -31,7 +31,7 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
         const menuHeight = Math.min(options.length * 48 + 20, 256);
         const spaceBelow = window.innerHeight - rect.bottom;
         const spaceAbove = rect.top;
-        
+
         // Flip if not enough space below AND there is more space above
         const shouldFlip = spaceBelow < menuHeight + 20 && spaceAbove > spaceBelow;
 
@@ -62,7 +62,7 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
         <>
           {/* Click outside backdrop */}
           <div className="fixed inset-0 z-[9998]" onClick={() => setIsOpen(false)} />
-          
+
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: coords.position === 'bottom' ? -10 : 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -77,7 +77,7 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
             }}
           >
             {options.length === 0 ? (
-              <div className="px-4 py-3 text-xs text-slate-500 italic text-center">No options available</div>
+              <div className="px-4 py-3 text-xs text-gray-500 italic text-center">No options available</div>
             ) : (
               options.map((opt) => (
                 <button
@@ -88,9 +88,9 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
                   }}
                   className={cn(
                     "w-full text-left px-4 py-3 rounded-xl text-xs transition-all mb-1 last:mb-0",
-                    value === opt.value 
-                      ? "bg-[#0F0842] text-white font-bold" 
-                      : "text-slate-600 hover:bg-[#0F0842]/5 hover:text-[#0F0842] hover:translate-x-1"
+                    value === opt.value
+                      ? "bg-blue-600 text-white font-bold"
+                      : "text-gray-400 hover:bg-white/10 hover:text-white hover:translate-x-1"
                   )}
                 >
                   {opt.label}
@@ -104,8 +104,8 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
   );
 
   return (
-    <div className={cn("space-y-1.5 w-full relative", className)} ref={containerRef}>
-      {label && <label className="text-[10px] font-bold text-slate-500 uppercase block ml-1">{label}</label>}
+    <div className={cn("space-y-2 w-full relative", className)} ref={containerRef}>
+      {label && <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block ml-1">{label}</label>}
       <div className="relative">
         <button
           type="button"
@@ -114,17 +114,17 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
           className={cn(
             "glass-input text-left flex items-center justify-between group",
             disabled && "opacity-50 cursor-not-allowed",
-            isOpen && "border-indigo-500/50 bg-white/10"
+            isOpen && "border-blue-500/50 bg-white/10"
           )}
         >
-          <span className={cn("truncate", !selectedOption && "text-slate-500")}>
+          <span className={cn("truncate font-bold", !selectedOption ? "text-white/30" : "text-white")}>
             {selectedOption ? selectedOption.label : placeholder}
           </span>
           <motion.div
             animate={{ rotate: isOpen ? 180 : 0 }}
             transition={{ duration: 0.2 }}
           >
-            <Settings className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400" />
+            <Settings className="w-3.5 h-3.5 text-gray-500 group-hover:text-blue-400" />
           </motion.div>
         </button>
 
@@ -142,29 +142,22 @@ const STAGES = [
 
 function Stepper({ currentStage, setCurrentStage, files }) {
   return (
-    <div className="flex items-center gap-4 bg-white/50 border-400 border-[#05011a]/20 rounded-full px-6 py-3 backdrop-blur-xl shadow-sm">
+    <div className="flex items-center gap-1 p-1 bg-white/5 rounded-full backdrop-blur-md border border-white/5 ring-1 ring-white/5">
       {STAGES.map((s, i) => (
         <React.Fragment key={s.id}>
-           <button
+          <button
             type="button"
             onClick={() => files.length >= 2 || s.id === 0 ? setCurrentStage(s.id) : null}
             disabled={files.length < 2 && s.id > 0}
             className={cn(
-              "stepper-item group",
-              currentStage === s.id && "active",
-              currentStage > s.id && "completed",
-              files.length < 2 && s.id > 0 && "disabled"
+              "flex items-center gap-2 px-4 py-2 rounded-full transition-all duration-300",
+              currentStage === s.id ? "bg-white text-black shadow-lg" : "text-gray-400 hover:text-white hover:bg-white/5",
+              files.length < 2 && s.id > 0 && "opacity-30 cursor-not-allowed"
             )}
           >
-            <div className={cn(
-              "w-8 h-8 rounded-full flex items-center justify-center transition-all",
-              currentStage === s.id ? "bg-[#0F0842] text-white shadow-lg shadow-[#0F0842]/20" : "bg-[#0F0842]/5 text-slate-400"
-            )}>
-              <s.icon className="w-4 h-4" />
-            </div>
-            <span className="text-xs font-bold uppercase tracking-widest hidden md:block">{s.name}</span>
+            <s.icon className={cn("w-3.5 h-3.5", currentStage === s.id ? "text-blue-600" : "")} />
+            <span className="text-[10px] font-bold uppercase tracking-wider hidden md:block">{s.name}</span>
           </button>
-          {i < STAGES.length - 1 && <div className="w-8 h-px bg-[#0F0842]/10" />}
         </React.Fragment>
       ))}
     </div>
@@ -173,45 +166,41 @@ function Stepper({ currentStage, setCurrentStage, files }) {
 
 function ActionBar({ currentStage, setCurrentStage, files, executeChain, executeLoading, handleDownload, finalResultId }) {
   return (
-    <div className="action-bar border-[#0F0842]/10">
-       <button 
+    <div className="fixed bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-2 p-1.5 bg-[#202124]/60 backdrop-blur-2xl border border-white/10 rounded-full z-50 shadow-[0_24px_48px_rgba(0,0,0,0.5)] scale-110">
+      <button
         type="button"
         disabled={currentStage === 0}
         onClick={() => setCurrentStage(prev => prev - 1)}
-        className="glass-button bg-white text-slate-600 hover:bg-slate-50 flex items-center gap-2 border-400 border-[#0F0842]/10 shadow-sm"
-       >
-         <ArrowRight className="w-4 h-4 rotate-180" /> Previous
-       </button>
-       
-       <div className="h-6 w-px bg-[#0F0842]/10" />
+        className="px-6 py-3 rounded-full text-[11px] font-bold text-gray-400 hover:text-white hover:bg-white/5 transition-all flex items-center gap-2 disabled:opacity-20"
+      >
+        <ArrowRight className="w-3.5 h-3.5 rotate-180" /> Previous
+      </button>
 
-       {currentStage < 2 ? (
-         <button 
+      <div className="h-6 w-px bg-white/10 mx-2" />
+
+      {currentStage < 2 ? (
+        <button
           type="button"
           disabled={files.length < 2}
           onClick={() => {
-            if (currentStage === 0 && files.length < 2) {
-              setError("Please upload at least 2 datasets to continue building the pipeline.");
-              return;
-            }
             if (currentStage === 1) executeChain();
             else setCurrentStage(prev => prev + 1);
           }}
-          className="glass-button primary-gradient flex items-center gap-2"
-         >
-           {currentStage === 1 ? (executeLoading ? 'Executing...' : 'Run Pipeline') : 'Next Stage'}
-           <ArrowRight className="w-4 h-4" />
-         </button>
-       ) : (
-         <button 
+          className="px-8 py-3 rounded-full text-[11px] font-black uppercase tracking-widest bg-white text-black hover:bg-gray-200 transition-all shadow-xl flex items-center gap-2 active:scale-95 disabled:opacity-50"
+        >
+          {currentStage === 1 ? (executeLoading ? 'Executing...' : 'Run Pipeline') : 'Next Stage'}
+          <ArrowRight className="w-3.5 h-3.5" />
+        </button>
+      ) : (
+        <button
           type="button"
           onClick={handleDownload}
           disabled={!finalResultId}
-          className="glass-button bg-emerald-600 text-white hover:bg-emerald-500 flex items-center gap-2"
-         >
-           <Download className="w-4 h-4" /> Export Result
-         </button>
-       )}
+          className="px-8 py-3 rounded-full text-[11px] font-black uppercase tracking-widest bg-blue-600 text-white hover:bg-blue-500 transition-all shadow-xl shadow-blue-500/20 flex items-center gap-2 active:scale-95 disabled:opacity-50"
+        >
+          <Download className="w-3.5 h-3.5" /> Export Result
+        </button>
+      )}
     </div>
   );
 }
@@ -220,10 +209,10 @@ function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete,
   return (
     <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        <section className="glass-card p-8 border-[#0F0842]/10">
-          <div className="flex items-center justify-between mb-8">
-            <h2 className="text-2xl font-black flex items-center gap-3 text-[#0F0842]">
-              <Upload className="w-6 h-6 text-[#0F0842]" /> Import Data
+        <section className="glass-card p-10 ring-1 ring-white/5">
+          <div className="flex items-center justify-between mb-10">
+            <h2 className="text-3xl font-black flex items-center gap-4 text-white">
+              <Upload className="w-8 h-8 text-blue-500" /> Import Data
             </h2>
           </div>
           <div className="relative group">
@@ -231,12 +220,12 @@ function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete,
               type="file" multiple onChange={handleFileUpload} accept=".csv,.xls,.xlsx"
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
             />
-            <div className="border-400 border-dashed border-[#0F0842]/10 rounded-3xl p-12 text-center group-hover:border-[#0F0842]/30 group-hover:bg-[#E9D5FF]/20 transition-all">
-              <div className="w-20 h-20 bg-[#0F0842]/5 rounded-full flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
-                <FileText className="w-10 h-10 text-[#0F0842]" />
+            <div className="border-2 border-dashed border-white/5 rounded-[32px] p-16 text-center group-hover:border-blue-500/30 group-hover:bg-blue-500/5 transition-all duration-500">
+              <div className="w-24 h-24 bg-blue-500/10 rounded-full flex items-center justify-center mx-auto mb-8 group-hover:scale-110 transition-transform">
+                <FileText className="w-12 h-12 text-blue-500" />
               </div>
-              <h3 className="text-lg font-bold text-[#0F0842] mb-2">Select or Drop Files</h3>
-              <p className="text-sm text-slate-500 max-w-[200px] mx-auto">Excel or CSV files supported for harmonization.</p>
+              <h3 className="text-xl font-bold text-white mb-3">Select or Drop Files</h3>
+              <p className="text-sm text-gray-500 max-w-[240px] mx-auto leading-relaxed">Excel or CSV files supported for harmonization.</p>
             </div>
           </div>
           {uploadLoading && (
@@ -246,10 +235,10 @@ function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete,
                 <span>Wait a moment</span>
               </div>
               <div className="h-1.5 w-full bg-[#0F0842]/5 rounded-full overflow-hidden">
-                <motion.div 
-                  initial={{ x: "-100%" }} 
-                  animate={{ x: "100%" }} 
-                  transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }} 
+                <motion.div
+                  initial={{ x: "-100%" }}
+                  animate={{ x: "100%" }}
+                  transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
                   className="h-full w-1/2 bg-[#0F0842] shadow-[0_0_10px_rgba(15,8,66,0.3)]"
                 />
               </div>
@@ -257,44 +246,44 @@ function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete,
           )}
         </section>
 
-        <section className="glass-card p-8 border-[#0F0842]/10 overflow-hidden">
-           <h2 className="text-2xl font-black flex items-center gap-3 mb-8">
-              <Database className="w-6 h-6 text-emerald-600" /> Active Inventory
-            </h2>
-            <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-               {files.length === 0 ? (
-                 <div className="py-12 text-center opacity-30 flex flex-col items-center gap-4 text-[#0F0842]">
-                    <Layers className="w-12 h-12" />
-                    <p className="text-sm font-bold uppercase tracking-widest">No Datasets Loaded</p>
-                 </div>
-               ) : (
-                 files.map(f => (
-                  <motion.div 
-                    key={f.id}
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className="flex items-center justify-between p-4 bg-white border-400 border-[#0F0842]/5 rounded-2xl group hover:border-[#0F0842]/20 transition-all shadow-sm"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-600">
-                         <FileText className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-bold tracking-tight text-[#0F0842]">{f.name}</h4>
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{f.columns.length} Columns</p>
-                      </div>
+        <section className="glass-card p-10 ring-1 ring-white/5 overflow-hidden">
+          <h2 className="text-3xl font-black flex items-center gap-4 mb-10 text-white">
+            <Database className="w-8 h-8 text-blue-400" /> Active Inventory
+          </h2>
+          <div className="space-y-4 max-h-[500px] overflow-y-auto pr-4 custom-scrollbar">
+            {files.length === 0 ? (
+              <div className="py-20 text-center opacity-20 flex flex-col items-center gap-6 text-white">
+                <Layers className="w-16 h-16" />
+                <p className="text-sm font-bold uppercase tracking-[0.4em]">No Datasets Loaded</p>
+              </div>
+            ) : (
+              files.map(f => (
+                <motion.div
+                  key={f.id}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="flex items-center justify-between p-5 glass-subcard group"
+                >
+                  <div className="flex items-center gap-5">
+                    <div className="p-4 bg-blue-500/10 rounded-2xl text-blue-400">
+                      <FileText className="w-6 h-6" />
                     </div>
-                    <button 
-                      type="button"
-                      onClick={() => setDeleteConfirm({ id: f.id, name: f.name })}
-                      className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
-                  </motion.div>
-                ))
-               )}
-            </div>
+                    <div>
+                      <h4 className="text-base font-bold text-white mb-1">{f.name}</h4>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em]">{f.columns.length} Columns</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirm({ id: f.id, name: f.name })}
+                    className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </motion.div>
+              ))
+            )}
+          </div>
         </section>
       </div>
 
@@ -302,39 +291,40 @@ function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete,
       <AnimatePresence>
         {deleteConfirm && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }} 
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               onClick={() => setDeleteConfirm(null)}
               className="absolute inset-0 bg-[#0F0842]/20 backdrop-blur-sm"
             />
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-md glass-card p-8 bg-white border-[#0F0842]/10 shadow-3xl"
+              className="relative w-full max-w-md glass-card p-10 ring-1 ring-white/10 shadow-3xl overflow-hidden"
             >
-              <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center mb-6">
+              <div className="absolute top-0 left-0 w-full h-1 bg-rose-500/50" />
+              <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-8">
                 <Trash2 className="w-8 h-8 text-rose-500" />
               </div>
-              <h3 className="text-xl font-black text-[#0F0842] mb-2">Delete Dataset?</h3>
-              <p className="text-sm text-slate-500 mb-8 font-medium">
-                Are you sure you want to remove <span className="font-bold text-[#0F0842]">"{deleteConfirm.name}"</span>? This action cannot be undone and will affect any joins using this file.
+              <h3 className="text-2xl font-black text-white mb-3">Delete Dataset?</h3>
+              <p className="text-sm text-gray-400 mb-10 font-medium leading-relaxed">
+                Are you sure you want to remove <span className="font-bold text-white">"{deleteConfirm.name}"</span>? This action cannot be undone and will affect any joins using this file.
               </p>
               <div className="grid grid-cols-2 gap-4">
-                <button 
+                <button
                   onClick={() => setDeleteConfirm(null)}
-                  className="py-3 px-6 rounded-xl font-bold text-[#0F0842]/60 hover:bg-slate-50 transition-all border border-[#0F0842]/5"
+                  className="py-4 px-6 rounded-2xl font-bold text-gray-400 hover:bg-white/5 transition-all border border-white/5"
                 >
                   Cancel
                 </button>
-                <button 
+                <button
                   onClick={() => {
                     handleFileDelete(deleteConfirm.id);
                     setDeleteConfirm(null);
                   }}
-                  className="py-3 px-6 rounded-xl font-bold bg-rose-500 text-white hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20"
+                  className="py-4 px-6 rounded-2xl font-bold bg-rose-500 text-white hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20"
                 >
                   Delete
                 </button>
@@ -347,325 +337,327 @@ function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete,
   );
 }
 
-function PipelineBuilder({ 
-  joins, files, activeColumns, addJoinStep, removeJoinStep, 
-  updateJoin, addKeyPair, removeKeyPair, updateKey, 
-  updateTransformation, showTransforms, setShowTransforms, getFileColumns, getStepLeftColumns 
+function PipelineBuilder({
+  joins, files, activeColumns, addJoinStep, removeJoinStep,
+  updateJoin, addKeyPair, removeKeyPair, updateKey,
+  updateTransformation, showTransforms, setShowTransforms, getFileColumns, getStepLeftColumns
 }) {
   return (
-     <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-[#0F0842]">
-        <div className="flex flex-col gap-8 max-w-4xl mx-auto w-full pb-24">
-           <div className="flex items-center justify-between">
-             <h2 className="text-2xl font-black flex items-center gap-3">
-               <Settings className="w-6 h-6 text-[#0F0842]" /> Pipeline Configuration
-             </h2>
-             <button 
-               type="button"
-               onClick={addJoinStep}
-               className="glass-button bg-[#0F0842] text-white flex items-center gap-2 text-xs py-2 shadow-lg shadow-[#0F0842]/20"
-             >
-               <Plus className="w-4 h-4" /> Add Join Step
-             </button>
-           </div>
+    <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-white">
+      <div className="flex flex-col gap-8 max-w-4xl mx-auto w-full pb-24">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-black flex items-center gap-3">
+            <Settings className="w-6 h-6 text-blue-500" /> Pipeline Configuration
+          </h2>
+          <button
+            type="button"
+            onClick={addJoinStep}
+            className="glass-button bg-blue-600 text-white flex items-center gap-2 text-xs py-2 shadow-lg shadow-blue-500/20"
+          >
+            <Plus className="w-4 h-4" /> Add Join Step
+          </button>
+        </div>
 
-          <div className="space-y-12">
-             {joins.map((join, index) => (
-                <motion.div 
-                  key={join.id}
-                  layout
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="relative"
-                >
-                  <div className="absolute -left-4 top-0 bottom-0 w-1 bg-[#0F0842]/5 rounded-full" />
-                  
-                  <div className="glass-card p-8 border-[#0F0842]/10 relative overflow-visible shadow-lg shadow-[#0F0842]/5">
-                     <div className="flex items-center justify-between mb-8">
-                        <div className="flex items-center gap-4">
-                           <div className="w-10 h-10 bg-[#0F0842] text-white rounded-2xl flex items-center justify-center font-black shadow-lg shadow-[#0F0842]/20">
-                              {index + 1}
-                           </div>
-                           <h3 className="text-lg font-bold text-[#0F0842]">Step {index + 1}: {index === 0 ? 'Primary Merge' : 'Chained Merge'}</h3>
-                        </div>
-                        {joins.length > 1 && (
-                          <button type="button" onClick={() => removeJoinStep(join.id)} className="text-slate-500 hover:text-rose-400 transition-colors">
-                            <Trash2 className="w-5 h-5" />
+        <div className="space-y-12">
+          {joins.map((join, index) => (
+            <motion.div
+              key={join.id}
+              layout
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="relative"
+            >
+              <div className="absolute -left-4 top-0 bottom-0 w-1 bg-white/10 rounded-full" />
+
+              <div className="glass-card p-10 ring-1 ring-white/5 relative overflow-visible shadow-2xl">
+                <div className="flex items-center justify-between mb-10">
+                  <div className="flex items-center gap-5">
+                    <div className="w-12 h-12 bg-white text-black rounded-2xl flex items-center justify-center text-xl font-black shadow-2xl">
+                      {index + 1}
+                    </div>
+                    <h3 className="text-xl font-black text-white">Step {index + 1}: {index === 0 ? 'Primary Merge' : 'Chained Merge'}</h3>
+                  </div>
+                  {joins.length > 1 && (
+                    <button type="button" onClick={() => removeJoinStep(join.id)} className="p-3 text-gray-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-2xl transition-all">
+                      <Trash2 className="w-6 h-6" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-end">
+                  <div className="space-y-6">
+                    {index === 0 ? (
+                      <CustomSelect
+                        label="Base Dataset (A)"
+                        value={join.fileA}
+                        options={files.map(f => ({ value: f.id, label: f.name }))}
+                        onChange={(val) => updateJoin(join.id, 'fileA', val)}
+                        placeholder="Choose starting point"
+                      />
+                    ) : (
+                      <div className="p-4 bg-white/5 rounded-2xl border-400 border-white/5 shadow-sm">
+                        <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Source Dataset</p>
+                        <span className="text-xs font-bold italic text-white/50">Previous Step Output</span>
+                      </div>
+                    )}
+
+                    <CustomSelect
+                      label="Target Dataset (B)"
+                      value={join.fileB}
+                      options={files.filter(f => f.id !== (index === 0 ? join.fileA : '')).map(f => ({ value: f.id, label: f.name }))}
+                      onChange={(val) => updateJoin(join.id, 'fileB', val)}
+                      placeholder="Choose dataset to join"
+                    />
+                  </div>
+
+                  <div className="space-y-6">
+                    <CustomSelect
+                      label="Merge Strategy"
+                      value={join.type}
+                      options={[
+                        { value: 'inner', label: 'Inner Join (Intersect)' },
+                        { value: 'left', label: 'Left Join (Keep A)' },
+                        { value: 'right', label: 'Right Join (Keep B)' },
+                        { value: 'outer', label: 'Outer Join (Find All)' },
+                        { value: 'append', label: 'Append (Merge Same Columns)' }
+                      ]}
+                      onChange={(val) => updateJoin(join.id, 'type', val)}
+                      placeholder="Select Logic"
+                    />
+                  </div>
+                </div>
+
+                {/* Mapping Keys */}
+                <div className="mt-8 pt-8 border-t border-white/5 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Key Mapping</h4>
+                    <button type="button" onClick={() => addKeyPair(join.id)} className="text-[10px] font-black text-indigo-400 hover:text-indigo-300 uppercase tracking-widest">+ Add Pair</button>
+                  </div>
+
+
+                  <div className="space-y-4">
+                    {join.keysA.map((_, kIdx) => (
+                      <div key={kIdx} className="grid grid-cols-1 md:grid-cols-[1fr,auto,1fr,auto] gap-4 items-center">
+                        <CustomSelect
+                          value={join.keysA[kIdx]}
+                          options={getStepLeftColumns(index, join).map(col => ({ value: col, label: col }))}
+                          onChange={(val) => updateKey(join.id, 'keysA', kIdx, val)}
+                          placeholder="Left Key"
+                        />
+                        <ArrowRight className="w-4 h-4 text-slate-600 hidden md:block" />
+                        <CustomSelect
+                          value={join.keysB[kIdx]}
+                          options={getFileColumns(join.fileB).map(col => ({ value: col, label: col }))}
+                          onChange={(val) => updateKey(join.id, 'keysB', kIdx, val)}
+                          placeholder="Right Key"
+                        />
+                        {join.keysA.length > 1 && (
+                          <button type="button" onClick={() => removeKeyPair(join.id, kIdx)} className="text-rose-500/50 hover:text-rose-500">
+                            <X className="w-4 h-4" />
                           </button>
                         )}
-                     </div>
-
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-end">
-                        <div className="space-y-6">
-                           {index === 0 ? (
-                            <CustomSelect 
-                              label="Base Dataset (A)"
-                              value={join.fileA}
-                              options={files.map(f => ({ value: f.id, label: f.name }))}
-                              onChange={(val) => updateJoin(join.id, 'fileA', val)}
-                              placeholder="Choose starting point"
-                            />
-                           ) : (
-                            <div className="p-4 bg-[#E9D5FF] rounded-2xl border-400 border-[#0F0842]/5 shadow-sm">
-                                <p className="text-[10px] font-black text-[#0F0842] uppercase tracking-widest mb-1">Source Dataset</p>
-                                <span className="text-xs font-bold italic text-[#0F0842]/70">Previous Step Output</span>
-                             </div>
-                           )}
-
-                           <CustomSelect 
-                            label="Target Dataset (B)"
-                            value={join.fileB}
-                            options={files.filter(f => f.id !== (index === 0 ? join.fileA : '')).map(f => ({ value: f.id, label: f.name }))}
-                            onChange={(val) => updateJoin(join.id, 'fileB', val)}
-                            placeholder="Choose dataset to join"
-                          />
-                        </div>
-
-                        <div className="space-y-6">
-                           <CustomSelect 
-                            label="Merge Strategy"
-                            value={join.type}
-                            options={[
-                              { value: 'inner', label: 'Inner Join (Intersect)' },
-                              { value: 'left', label: 'Left Join (Keep A)' },
-                              { value: 'right', label: 'Right Join (Keep B)' },
-                              { value: 'outer', label: 'Outer Join (Find All)' },
-                              { value: 'append', label: 'Append (Merge Same Columns)' }
-                            ]}
-                            onChange={(val) => updateJoin(join.id, 'type', val)}
-                            placeholder="Select Logic"
-                          />
-                        </div>
-                     </div>
-
-                     {/* Mapping Keys */}
-                     <div className="mt-8 pt-8 border-t border-white/5 space-y-6">
-                        <div className="flex items-center justify-between">
-                           <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Key Mapping</h4>
-                           <button type="button" onClick={() => addKeyPair(join.id)} className="text-[10px] font-black text-indigo-400 hover:text-indigo-300 uppercase tracking-widest">+ Add Pair</button>
-                        </div>
-
-
-                        <div className="space-y-4">
-                           {join.keysA.map((_, kIdx) => (
-                             <div key={kIdx} className="grid grid-cols-1 md:grid-cols-[1fr,auto,1fr,auto] gap-4 items-center">
-                                <CustomSelect 
-                                  value={join.keysA[kIdx]}
-                                  options={getStepLeftColumns(index, join).map(col => ({ value: col, label: col }))}
-                                  onChange={(val) => updateKey(join.id, 'keysA', kIdx, val)}
-                                  placeholder="Left Key"
-                                />
-                                <ArrowRight className="w-4 h-4 text-slate-600 hidden md:block" />
-                                <CustomSelect 
-                                  value={join.keysB[kIdx]}
-                                  options={getFileColumns(join.fileB).map(col => ({ value: col, label: col }))}
-                                  onChange={(val) => updateKey(join.id, 'keysB', kIdx, val)}
-                                  placeholder="Right Key"
-                                />
-                                {join.keysA.length > 1 && (
-                                  <button type="button" onClick={() => removeKeyPair(join.id, kIdx)} className="text-rose-500/50 hover:text-rose-500">
-                                    <X className="w-4 h-4" />
-                                  </button>
-                                )}
-                             </div>
-                           ))}
-                        </div>
-                     </div>
-
-                     {/* Transformations Toggle */}
-                     <div className="mt-8 pt-6 border-t border-white/5">
-                        <button 
-                          type="button"
-                          onClick={() => setShowTransforms(prev => ({ ...prev, [join.id]: !prev[join.id] }))}
-                          className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] hover:text-indigo-400 transition-colors"
-                        >
-                          {showTransforms[join.id] ? <X className="w-4 h-4" /> : <Settings className="w-4 h-4" />}
-                          {showTransforms[join.id] ? 'Minimize' : 'Refine'} Data Transformations
-                        </button>
-                        <AnimatePresence>
-                          {showTransforms[join.id] && (
-                            <motion.div 
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              className="mt-6 space-y-8 overflow-hidden"
-                            >
-                               <div className="bg-white/5 border-400 border-white/5 rounded-3xl p-8 space-y-8">
-                                  {/* Drop Columns */}
-                                  <div>
-                                    <h5 className="text-[10px] font-black text-rose-500 uppercase tracking-widest mb-4">Exclude Attributes</h5>
-                                    <div className="flex flex-wrap gap-2">
-                                      {(() => {
-                                        const colsA = getStepLeftColumns(index, join);
-                                        const colsB = getFileColumns(join.fileB);
-                                        return [...new Set([...colsA, ...colsB])].sort().map(col => (
-                                          <button 
-                                            key={col}
-                                            type="button"
-                                            onClick={() => {
-                                              const drops = join.transformations.drop.includes(col) 
-                                                ? join.transformations.drop.filter(d => d !== col)
-                                                : [...join.transformations.drop, col];
-                                              updateTransformation(join.id, 'drop', drops);
-                                            }}
-                                            className={cn(
-                                              "px-3 py-1.5 rounded-xl text-[10px] font-bold border transition-all",
-                                              join.transformations.drop.includes(col)
-                                                ? "bg-rose-500/20 border-rose-500/50 text-rose-400"
-                                                : "bg-white/5 border-white/5 text-slate-500 hover:border-white/20"
-                                            )}
-                                          >
-                                            {col}
-                                          </button>
-                                        ));
-                                      })()}
-                                    </div>
-                                  </div>
-
-                                  {/* Rename/Cast Simplified */}
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                     <div className="space-y-4">
-                                        <h5 className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-4">Aliasing (Rename)</h5>
-                                        <CustomSelect 
-                                          placeholder="Column to rename..."
-                                          options={[...new Set([...getStepLeftColumns(index, join), ...getFileColumns(join.fileB)])].filter(c => !join.transformations.rename[c]).map(c => ({ value: c, label: c }))}
-                                          onChange={(val) => updateTransformation(join.id, 'rename', { ...join.transformations.rename, [val]: val })}
-                                          value=""
-                                        />
-                                        <div className="space-y-2">
-                                           {Object.entries(join.transformations.rename).map(([old, curr]) => (
-                                              <div key={old} className="flex items-center gap-3 p-3 bg-white/5 border-400 border-white/5 rounded-2xl">
-                                                <span className="text-[10px] font-mono text-slate-500 truncate w-24">#{old}</span>
-                                                <input 
-                                                  value={curr}
-                                                  className="bg-transparent text-xs font-bold text-[#0F0842] outline-none flex-1 border-b border-[#0F0842]/10 focus:border-[#0F0842] transition-colors placeholder:text-slate-300"
-                                                  placeholder="New name..."
-                                                  onChange={(e) => updateTransformation(join.id, 'rename', { ...join.transformations.rename, [old]: e.target.value })}
-                                                />
-                                                <button type="button" onClick={() => {
-                                                  const d = { ...join.transformations.rename }; delete d[old]; updateTransformation(join.id, 'rename', d);
-                                                }} className="text-slate-600 hover:text-rose-500"><X className="w-4 h-4" /></button>
-                                              </div>
-                                           ))}
-                                        </div>
-                                     </div>
-
-                                     <div className="space-y-4">
-                                        <h5 className="text-[10px] font-black text-violet-600 uppercase tracking-widest mb-4">Schema Casting (Type)</h5>
-                                        <CustomSelect 
-                                          placeholder="Column to cast..."
-                                          options={[...new Set([...getStepLeftColumns(index, join), ...getFileColumns(join.fileB)])].filter(c => !join.transformations.cast[c]).map(c => ({ value: c, label: c }))}
-                                          onChange={(val) => updateTransformation(join.id, 'cast', { ...join.transformations.cast, [val]: 'str' })}
-                                          value=""
-                                        />
-                                        <div className="space-y-2">
-                                           {Object.entries(join.transformations.cast).map(([col, type]) => (
-                                              <div key={col} className="flex items-center justify-between p-3 bg-white border-400 border-[#0F0842]/5 rounded-2xl shadow-sm">
-                                                <span className="text-[10px] font-mono text-slate-500 truncate w-24">#{col}</span>
-                                                <select 
-                                                  value={type}
-                                                  onChange={(e) => updateTransformation(join.id, 'cast', { ...join.transformations.cast, [col]: e.target.value })}
-                                                  className="bg-white text-[10px] font-bold text-[#0F0842] outline-none border border-[#0F0842]/10 rounded-lg px-2 py-1"
-                                                >
-                                                  <option value="str">String</option>
-                                                  <option value="int64">Integer</option>
-                                                  <option value="float64">Float</option>
-                                                  <option value="datetime64[ns]">Date</option>
-                                                </select>
-                                                <button type="button" onClick={() => {
-                                                  const d = { ...join.transformations.cast }; delete d[col]; updateTransformation(join.id, 'cast', d);
-                                                }} className="text-slate-400 hover:text-rose-500 ml-2"><X className="w-4 h-4" /></button>
-                                              </div>
-                                           ))}
-                                        </div>
-                                     </div>
-                                  </div>
-                               </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                     </div>
+                      </div>
+                    ))}
                   </div>
-                </motion.div>
-             ))}
-          </div>
-       </div>
+                </div>
+
+                {/* Transformations Toggle */}
+                <div className="mt-8 pt-6 border-t border-white/5">
+                  <button
+                    type="button"
+                    onClick={() => setShowTransforms(prev => ({ ...prev, [join.id]: !prev[join.id] }))}
+                    className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] hover:text-indigo-400 transition-colors"
+                  >
+                    {showTransforms[join.id] ? <X className="w-4 h-4" /> : <Settings className="w-4 h-4" />}
+                    {showTransforms[join.id] ? 'Minimize' : 'Refine'} Data Transformations
+                  </button>
+                  <AnimatePresence>
+                    {showTransforms[join.id] && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="mt-6 space-y-8 overflow-hidden"
+                      >
+                        <div className="glass-subcard p-8 space-y-8 !bg-black/40">
+                          {/* Drop Columns */}
+                          <div>
+                            <h5 className="text-[10px] font-black text-rose-500 uppercase tracking-widest mb-4">Exclude Attributes</h5>
+                            <div className="flex flex-wrap gap-2">
+                              {(() => {
+                                const colsA = getStepLeftColumns(index, join);
+                                const colsB = getFileColumns(join.fileB);
+                                return [...new Set([...colsA, ...colsB])].sort().map(col => (
+                                  <button
+                                    key={col}
+                                    type="button"
+                                    onClick={() => {
+                                      const drops = join.transformations.drop.includes(col)
+                                        ? join.transformations.drop.filter(d => d !== col)
+                                        : [...join.transformations.drop, col];
+                                      updateTransformation(join.id, 'drop', drops);
+                                    }}
+                                    className={cn(
+                                      "px-3 py-1.5 rounded-xl text-[10px] font-bold border transition-all",
+                                      join.transformations.drop.includes(col)
+                                        ? "bg-rose-500/20 border-rose-500/50 text-rose-400"
+                                        : "bg-white/5 border-white/5 text-slate-500 hover:border-white/20"
+                                    )}
+                                  >
+                                    {col}
+                                  </button>
+                                ));
+                              })()}
+                            </div>
+                          </div>
+
+                          {/* Rename/Cast Simplified */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <div className="space-y-4">
+                              <h5 className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-4">Aliasing (Rename)</h5>
+                              <CustomSelect
+                                placeholder="Column to rename..."
+                                options={[...new Set([...getStepLeftColumns(index, join), ...getFileColumns(join.fileB)])].filter(c => !join.transformations.rename[c]).map(c => ({ value: c, label: c }))}
+                                onChange={(val) => updateTransformation(join.id, 'rename', { ...join.transformations.rename, [val]: val })}
+                                value=""
+                              />
+                              <div className="space-y-2">
+                                {Object.entries(join.transformations.rename).map(([old, curr]) => (
+                                  <div key={old} className="flex items-center gap-3 p-3 glass-subcard !rounded-2xl">
+                                    <span className="text-[10px] font-mono text-gray-500 truncate w-24">#{old}</span>
+                                    <input
+                                      value={curr}
+                                      className="bg-transparent text-xs font-bold text-white outline-none flex-1 border-b border-white/10 focus:border-blue-500/50 transition-colors placeholder:text-gray-600"
+                                      placeholder="New name..."
+                                      onChange={(e) => updateTransformation(join.id, 'rename', { ...join.transformations.rename, [old]: e.target.value })}
+                                    />
+                                    <button type="button" onClick={() => {
+                                      const d = { ...join.transformations.rename }; delete d[old]; updateTransformation(join.id, 'rename', d);
+                                    }} className="text-slate-600 hover:text-rose-500"><X className="w-4 h-4" /></button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="space-y-4">
+                              <h5 className="text-[10px] font-black text-violet-600 uppercase tracking-widest mb-4">Schema Casting (Type)</h5>
+                              <CustomSelect
+                                placeholder="Column to cast..."
+                                options={[...new Set([...getStepLeftColumns(index, join), ...getFileColumns(join.fileB)])].filter(c => !join.transformations.cast[c]).map(c => ({ value: c, label: c }))}
+                                onChange={(val) => updateTransformation(join.id, 'cast', { ...join.transformations.cast, [val]: 'str' })}
+                                value=""
+                              />
+                              <div className="space-y-2">
+                                {Object.entries(join.transformations.cast).map(([col, type]) => (
+                                  <div key={col} className="flex items-center justify-between p-3 glass-subcard !rounded-2xl">
+                                    <span className="text-[10px] font-mono text-gray-500 truncate w-24">#{col}</span>
+                                    <select
+                                      value={type}
+                                      onChange={(e) => updateTransformation(join.id, 'cast', { ...join.transformations.cast, [col]: e.target.value })}
+                                      className="bg-black/40 text-[10px] font-bold text-white outline-none border border-white/10 rounded-lg px-2 py-1"
+                                    >
+                                      <option value="str">String</option>
+                                      <option value="int64">Integer</option>
+                                      <option value="float64">Float</option>
+                                      <option value="datetime64[ns]">Date</option>
+                                    </select>
+                                    <button type="button" onClick={() => {
+                                      const d = { ...join.transformations.cast }; delete d[col]; updateTransformation(join.id, 'cast', d);
+                                    }} className="text-slate-400 hover:text-rose-500 ml-2"><X className="w-4 h-4" /></button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
 
 function ReviewView({ previewData, metrics, saveProject }) {
   return (
-    <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-[#0F0842]">
-       <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
-          <div className="xl:col-span-3 space-y-8 pb-32">
-             <section className="glass-card overflow-hidden border-[#0F0842]/10">
-                <div className="p-8 border-b border-[#0F0842]/5 flex items-center justify-between bg-white">
-                   <div>
-                      <h2 className="text-2xl font-black flex items-center gap-3">
-                        <Table className="w-6 h-6 text-[#0F0842]" /> Result Preview
-                      </h2>
-                      <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">First 50 synthesized records</p>
-                   </div>
-                </div>
+    <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-white">
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-10">
+        <div className="xl:col-span-3 space-y-10 pb-32">
+          <section className="glass-card overflow-hidden ring-1 ring-white/5">
+            <div className="p-10 border-b border-white/5 flex items-center justify-between bg-white/5">
+              <div>
+                <h2 className="text-3xl font-black flex items-center gap-4">
+                  <Table className="w-8 h-8 text-blue-400" /> Result Preview
+                </h2>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-[0.2em] mt-2">First 50 synthesized records</p>
+              </div>
+            </div>
 
-                <div className="overflow-x-auto max-h-[600px] custom-scrollbar">
-                   {!previewData ? (
-                      <div className="py-32 text-center opacity-30 flex flex-col items-center gap-6">
-                         <Sparkles className="w-16 h-16 animate-pulse" />
-                         <p className="text-sm font-bold uppercase tracking-[0.3em]">No Data to Display</p>
-                      </div>
-                   ) : (
-                      <table className="w-full border-collapse text-left">
-                        <thead>
-                          <tr className="bg-slate-50 shadow-sm z-10 sticky top-0 border-b-400 border-[#0F0842]/10">
-                            {previewData.columns.map(col => (
-                              <th key={col} className="px-6 py-4 text-[10px] font-black text-[#0F0842] uppercase tracking-widest whitespace-nowrap">{col}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[#0F0842]/5 bg-white">
-                          {previewData.data.map((row, i) => (
-                            <tr key={i} className="hover:bg-slate-50 transition-colors group">
-                               {previewData.columns.map(col => (
-                                 <td key={`${i}-${col}`} className="px-6 py-3 text-xs font-medium text-slate-600 group-hover:text-[#0F0842] transition-colors whitespace-nowrap">{String(row[col])}</td>
-                               ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                   )}
+            <div className="overflow-x-auto max-h-[700px] custom-scrollbar">
+              {!previewData ? (
+                <div className="py-40 text-center opacity-20 flex flex-col items-center gap-10">
+                  <Sparkles className="w-20 h-20 animate-pulse text-blue-500" />
+                  <p className="text-sm font-bold uppercase tracking-[0.5em]">No Data to Display</p>
                 </div>
-             </section>
+              ) : (
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr className="bg-white/5 backdrop-blur-md z-10 sticky top-0 border-b border-white/10">
+                      {previewData.columns.map(col => (
+                        <th key={col} className="px-8 py-5 text-[10px] font-black text-blue-300 uppercase tracking-[0.2em] whitespace-nowrap">{col}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 bg-transparent">
+                    {previewData.data.map((row, i) => (
+                      <tr key={i} className="hover:bg-white/5 transition-colors group">
+                        {previewData.columns.map(col => (
+                          <td key={`${i}-${col}`} className="px-8 py-4 text-sm font-medium text-gray-300 group-hover:text-white transition-colors whitespace-nowrap">{String(row[col])}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <aside className="xl:col-span-1 space-y-8">
+          <div className="glass-card p-10 ring-1 ring-white/5 shadow-3xl">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-500 mb-8 border-b border-white/5 pb-5">Quality Metrics</h3>
+            {metrics ? (
+              <div className="space-y-6">
+                {[
+                  { label: "Missing Values", value: metrics.null_count, color: "text-amber-400", bg: "bg-amber-500/10", icon: AlertCircle },
+                  { label: "Duplicates", value: metrics.duplicate_count, color: "text-rose-400", bg: "bg-rose-500/10", icon: Trash2 },
+                ].map((m, i) => (
+                  <div key={i} className="p-6 glass-subcard !rounded-[24px] flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-gray-500 tracking-widest mb-2">{m.label}</p>
+                      <span className={`text-3xl font-black ${m.color}`}>{m.value}</span>
+                    </div>
+                    <div className={`p-4 ${m.bg} ${m.color} rounded-2xl`}>
+                      <m.icon className="w-6 h-6" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-10 opacity-20 text-xs font-bold italic uppercase tracking-widest leading-relaxed">Metrics unavailable</div>
+            )}
           </div>
 
-          <aside className="xl:col-span-1 space-y-6">
-             <div className="glass-card p-8 border-[#0F0842]/10 shadow-lg">
-                <h3 className="text-sm font-black uppercase tracking-widest text-[#0F0842]/50 mb-6 border-b border-[#0F0842]/5 pb-4">Quality Metrics</h3>
-                {metrics ? (
-                  <div className="space-y-4">
-                     {[
-                        { label: "Missing Values", value: metrics.null_count, color: "bg-amber-500/10 text-amber-600", icon: AlertCircle },
-                        { label: "Duplicates", value: metrics.duplicate_count, color: "bg-rose-500/10 text-rose-600", icon: Trash2 },
-                     ].map((m, i) => (
-                        <div key={i} className={`p-4 rounded-2xl border-400 border-[#0F0842]/5 flex items-center justify-between`}>
-                           <div>
-                              <p className="text-[10px] font-black uppercase text-slate-500 tracking-tighter mb-1">{m.label}</p>
-                              <span className={`text-xl font-black ${m.color.split(' ')[1]}`}>{m.value}</span>
-                           </div>
-                           <m.icon className={`w-5 h-5 ${m.color.split(' ')[1]}`} />
-                        </div>
-                     ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 opacity-20 text-xs font-bold italic uppercase">Metrics unavailable</div>
-                )}
-             </div>
-
-             <button type="button" onClick={saveProject} className="w-full py-4 bg-white border-400 border-[#0F0842]/10 rounded-2xl flex items-center justify-center gap-3 text-xs font-black uppercase tracking-widest text-[#0F0842]/60 hover:bg-slate-50 transition-all shadow-sm">
-                <Download className="w-4 h-4" /> Export Config
-             </button>
-          </aside>
-       </div>
+          <button type="button" onClick={saveProject} className="w-full py-5 bg-white/5 border border-white/10 rounded-3xl flex items-center justify-center gap-4 text-[10px] font-black uppercase tracking-[0.3em] text-gray-300 hover:bg-white/10 hover:text-white transition-all shadow-xl">
+            <Download className="w-4 h-4" /> Export Config
+          </button>
+        </aside>
+      </div>
     </div>
   );
 }
@@ -680,13 +672,13 @@ function App() {
 
   // Multi-Step Join State
   const [joins, setJoins] = useState([
-    { 
-      id: crypto.randomUUID(), 
-      fileA: '', 
-      keysA: [''], 
-      fileB: '', 
-      keysB: [''], 
-      type: 'inner', 
+    {
+      id: crypto.randomUUID(),
+      fileA: '',
+      keysA: [''],
+      fileB: '',
+      keysB: [''],
+      type: 'inner',
       transformations: { drop: [], rename: {}, cast: {} }
     }
   ]);
@@ -714,6 +706,16 @@ function App() {
   const [showCollections, setShowCollections] = useState(false);
   const [saveModal, setSaveModal] = useState(false);
   const [collectionName, setCollectionName] = useState("");
+
+  useEffect(() => {
+    if (error || success) {
+      const timer = setTimeout(() => {
+        setError(null);
+        setSuccess(null);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [error, success]);
 
   useEffect(() => {
     const fetchCollections = async () => {
@@ -763,7 +765,7 @@ function App() {
 
     setFiles(prev => prev.filter(f => f.id !== fileId));
     setSuccess('File removed successfully');
-    
+
     // Also clean up any join steps that might be using this file
     setJoins(prev => prev.map(j => {
       if (j.fileA === fileId) return { ...j, fileA: '', keysA: [''] };
@@ -802,11 +804,11 @@ function App() {
   };
 
   const addJoinStep = () => {
-    setJoins([...joins, { 
-      id: crypto.randomUUID(), 
-      fileB: '', 
-      keysB: [''], 
-      keysA: [''], 
+    setJoins([...joins, {
+      id: crypto.randomUUID(),
+      fileB: '',
+      keysB: [''],
+      keysA: [''],
       type: 'inner',
       transformations: { drop: [], rename: {}, cast: {} }
     }]);
@@ -827,8 +829,8 @@ function App() {
   };
 
   const removeKeyPair = (joinId, index) => {
-    setJoins(prev => prev.map(j => j.id === joinId ? { 
-      ...j, 
+    setJoins(prev => prev.map(j => j.id === joinId ? {
+      ...j,
       keysA: j.keysA.filter((_, i) => i !== index),
       keysB: j.keysB.filter((_, i) => i !== index)
     } : j));
@@ -893,7 +895,7 @@ function App() {
 
       for (let i = 0; i < joins.length; i++) {
         const step = joins[i];
-        
+
         if (i === 0 && (!step.fileA || !step.fileB || step.keysA.some(k => !k) || step.keysB.some(k => !k))) {
           throw new Error(`Step 1: Please select both files and all keys`);
         }
@@ -902,7 +904,7 @@ function App() {
         }
 
         const leftId = i === 0 ? step.fileA : currentResultId;
-        
+
         // Construct query parameters for multiple keys
         const params = new URLSearchParams();
         params.append('file_a_id', leftId);
@@ -912,7 +914,7 @@ function App() {
         params.append('join_type', step.type);
 
         const resp = await axios.post(`${API_BASE}/join?${params.toString()}`, step.transformations);
-        
+
         currentResultId = resp.data.result_id;
         lastCols = resp.data.columns;
         if (i === joins.length - 1) {
@@ -942,21 +944,21 @@ function App() {
    */
   const getStepLeftColumns = (stepIndex, currentJoin) => {
     if (stepIndex === 0) return getFileColumns(currentJoin.fileA);
-    
+
     // Heuristic: Process all previous steps sequentially to determine current schema
     let currentCols = [];
-    
+
     for (let i = 0; i < stepIndex; i++) {
-        const step = joins[i];
-        const colsA = i === 0 ? getFileColumns(step.fileA) : currentCols;
-        const colsB = getFileColumns(step.fileB);
-        
-        // Union of columns (Join logic)
-        let combined = [...new Set([...colsA, ...colsB])];
-        
-        // Apply transformations (Drops and Renames)
-        const renamed = combined.map(c => step.transformations.rename[c] || c);
-        currentCols = renamed.filter(c => !step.transformations.drop.includes(c));
+      const step = joins[i];
+      const colsA = i === 0 ? getFileColumns(step.fileA) : currentCols;
+      const colsB = getFileColumns(step.fileB);
+
+      // Union of columns (Join logic)
+      let combined = [...new Set([...colsA, ...colsB])];
+
+      // Apply transformations (Drops and Renames)
+      const renamed = combined.map(c => step.transformations.rename[c] || c);
+      currentCols = renamed.filter(c => !step.transformations.drop.includes(c));
     }
 
     return [...new Set(currentCols)].sort();
@@ -973,92 +975,117 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen text-[#0F0842] p-4 md:p-8 pb-32">
-      {/* Background Decor */}
-      <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#E9D5FF]/30 blur-[120px] rounded-full" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[#0F0842]/5 blur-[120px] rounded-full" />
-      </div>
+    <div className="min-h-screen relative">
+      {/* Enhanced Background system is now handled purely via CSS body backgrounds for smoother transitions */}
 
-      <header className="max-w-7xl mx-auto mb-12 flex flex-col md:flex-row items-center justify-between gap-8">
-        <div className="flex items-center gap-5">
-          <div className="p-4 bg-[#0F0842] rounded-3xl shadow-2xl shadow-[#0F0842]/20 rotate-3 transition-transform hover:rotate-0 cursor-default">
-            <Sparkles className="w-8 h-8 text-white" />
+      <header className="pill-nav max-w-fit mx-auto">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3 pl-2 pr-4 border-r border-white/10 group cursor-pointer">
+            <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center ring-1 ring-white/20 group-hover:ring-blue-500/50 transition-all">
+              <Sparkles className="w-4 h-4 text-blue-500 animate-pulse" />
+            </div>
+            <span className="text-sm font-black tracking-tight text-white hidden sm:block">DataForge</span>
           </div>
-          <div>
-            <h1 className="text-4xl font-black tracking-tighter text-[#0F0842]">ForgeJoin</h1>
-            <p className="text-[#0F0842]/40 text-[10px] font-black uppercase tracking-[0.4em]">Engine v3.0 // Unified Pipeline</p>
-          </div>
-        </div>
 
-        <Stepper currentStage={currentStage} setCurrentStage={setCurrentStage} files={files} />
-        
-        <div className="flex items-center gap-3">
-          <button onClick={() => setShowCollections(true)} className="glass-button !py-3 !px-6 text-[10px] bg-white hover:bg-slate-50 text-[#0F0842] flex items-center gap-2 border border-[#0F0842]/10 uppercase tracking-widest shadow-xl shadow-[#0F0842]/5">
-            <Layers className="w-4 h-4 text-emerald-600" /> Library
-          </button>
-          <button onClick={() => setSaveModal(true)} className="glass-button !py-3 !px-6 text-[10px] bg-[#0F0842] text-white hover:bg-[#0F0842]/90 flex items-center gap-2 uppercase tracking-widest shadow-xl shadow-[#0F0842]/20">
-            <Plus className="w-4 h-4" /> Save Collection
-          </button>
+          <Stepper currentStage={currentStage} setCurrentStage={setCurrentStage} files={files} />
+
+          <div className="flex items-center gap-2 pr-1">
+            <button onClick={() => setShowCollections(true)} className="px-5 py-2 text-[11px] font-bold text-gray-300 hover:text-white transition-colors">
+              Library
+            </button>
+            <button onClick={() => setSaveModal(true)} className="px-5 py-2 text-[11px] font-bold bg-blue-600 text-white rounded-full hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/20 active:scale-95">
+              Sign up
+            </button>
+          </div>
         </div>
       </header>
 
+      <div className="pt-32 pb-16 text-center space-y-4">
+        <h1 className="text-5xl md:text-7xl font-black tracking-tight leading-[1.1]">
+          Synergize your data with <br />
+          <span className="gemini-text">Next-gen AI Pipeline</span>
+        </h1>
+        <p className="text-gray-400 text-lg md:text-xl font-medium max-w-2xl mx-auto">
+          Experience the most capable data harmonization engine <br />
+          built for speed and precision.
+        </p>
+      </div>
+
       <main className="max-w-7xl mx-auto min-h-[60vh]">
-         {error && (
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-8 p-6 bg-rose-50 border border-rose-200 rounded-3xl flex items-center gap-4 text-rose-600 text-sm font-bold shadow-2xl backdrop-blur-xl">
-              <AlertCircle className="w-6 h-6 shrink-0" />
-              <span>{typeof error === 'object' ? JSON.stringify(error) : error}</span>
-              <button onClick={() => setError(null)} className="ml-auto opacity-50 text-rose-400 hover:text-rose-600"><X className="w-4 h-4" /></button>
-            </motion.div>
-         )}
+        {/* Toast Notifications */}
+        <div className="toast-container">
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, x: 20, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, x: 10, scale: 0.95 }}
+                className="toast-pill toast-error group"
+              >
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <span className="text-sm font-bold">{typeof error === 'object' ? JSON.stringify(error) : error}</span>
+                <button onClick={() => setError(null)} className="ml-2 p-1 hover:bg-white/10 rounded-full transition-all">
+                  <X className="w-3 h-3 opacity-50 group-hover:opacity-100" />
+                </button>
+              </motion.div>
+            )}
 
-         {success && (
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-8 p-6 bg-emerald-50 border border-emerald-200 rounded-3xl flex items-center gap-4 text-emerald-600 text-sm font-bold shadow-2xl backdrop-blur-xl">
-               <CheckCircle2 className="w-6 h-6 shrink-0" />
-               <span>{success}</span>
-               <button onClick={() => setSuccess(null)} className="ml-auto opacity-50 text-emerald-400 hover:text-emerald-600"><X className="w-4 h-4" /></button>
-            </motion.div>
-         )}
+            {success && (
+              <motion.div
+                initial={{ opacity: 0, x: 20, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, x: 10, scale: 0.95 }}
+                className="toast-pill toast-success group"
+              >
+                <CheckCircle2 className="w-5 h-5 shrink-0" />
+                <span className="text-sm font-bold">{success}</span>
+                <button onClick={() => setSuccess(null)} className="ml-2 p-1 hover:bg-white/10 rounded-full transition-all">
+                  <X className="w-3 h-3 opacity-50 group-hover:opacity-100" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
-         <AnimatePresence mode="wait">
-            <motion.div 
-              key={currentStage}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.3 }}
-            >
-              {currentStage === 0 && <SourcesView files={files} handleFileUpload={handleFileUpload} uploadLoading={uploadLoading} handleFileDelete={handleFileDelete} deleteConfirm={deleteConfirm} setDeleteConfirm={setDeleteConfirm} />}
-              {currentStage === 1 && (
-                <PipelineBuilder 
-                  joins={joins} 
-                  files={files} 
-                  activeColumns={activeColumns}
-                  addJoinStep={addJoinStep}
-                  removeJoinStep={removeJoinStep}
-                  updateJoin={updateJoin}
-                  addKeyPair={addKeyPair}
-                  removeKeyPair={removeKeyPair}
-                  updateKey={updateKey}
-                  updateTransformation={updateTransformation}
-                  showTransforms={showTransforms}
-                  setShowTransforms={setShowTransforms}
-                  getFileColumns={getFileColumns}
-                  getStepLeftColumns={getStepLeftColumns}
-                />
-              )}
-              {currentStage === 2 && <ReviewView previewData={previewData} metrics={metrics} saveProject={saveProject} />}
-            </motion.div>
-         </AnimatePresence>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={currentStage}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.3 }}
+          >
+            {currentStage === 0 && <SourcesView files={files} handleFileUpload={handleFileUpload} uploadLoading={uploadLoading} handleFileDelete={handleFileDelete} deleteConfirm={deleteConfirm} setDeleteConfirm={setDeleteConfirm} />}
+            {currentStage === 1 && (
+              <PipelineBuilder
+                joins={joins}
+                files={files}
+                activeColumns={activeColumns}
+                addJoinStep={addJoinStep}
+                removeJoinStep={removeJoinStep}
+                updateJoin={updateJoin}
+                addKeyPair={addKeyPair}
+                removeKeyPair={removeKeyPair}
+                updateKey={updateKey}
+                updateTransformation={updateTransformation}
+                showTransforms={showTransforms}
+                setShowTransforms={setShowTransforms}
+                getFileColumns={getFileColumns}
+                getStepLeftColumns={getStepLeftColumns}
+              />
+            )}
+            {currentStage === 2 && <ReviewView previewData={previewData} metrics={metrics} saveProject={saveProject} />}
+          </motion.div>
+        </AnimatePresence>
       </main>
 
-      <ActionBar 
-        currentStage={currentStage} 
-        setCurrentStage={setCurrentStage} 
-        files={files} 
-        executeChain={executeChain} 
-        executeLoading={executeLoading} 
-        handleDownload={handleDownload} 
+      <ActionBar
+        currentStage={currentStage}
+        setCurrentStage={setCurrentStage}
+        files={files}
+        executeChain={executeChain}
+        executeLoading={executeLoading}
+        handleDownload={handleDownload}
         finalResultId={finalResultId}
       />
 
@@ -1067,35 +1094,44 @@ function App() {
         {showCollections && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowCollections(false)} className="absolute inset-0 bg-[#0F0842]/20 backdrop-blur-sm" />
-            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-2xl glass-card p-8 bg-white border-[#0F0842]/10 shadow-3xl">
-              <div className="flex items-center justify-between mb-8">
-                <h3 className="text-xl font-black text-[#0F0842]">Stored Collections</h3>
-                <button onClick={() => setShowCollections(false)} className="p-2 hover:bg-slate-50 rounded-xl transition-all text-slate-400"><X className="w-5 h-5" /></button>
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-2xl glass-card p-10 ring-1 ring-white/10 shadow-3xl">
+              <div className="flex items-center justify-between mb-10">
+                <h3 className="text-2xl font-black text-white">Stored Collections</h3>
+                <button onClick={() => setShowCollections(false)} className="p-3 hover:bg-white/5 rounded-2xl transition-all text-gray-500 hover:text-white"><X className="w-6 h-6" /></button>
               </div>
-              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+              <div className="space-y-4 max-h-[500px] overflow-y-auto pr-4 custom-scrollbar">
                 {collections.length === 0 ? (
-                  <div className="py-12 text-center opacity-30 flex flex-col items-center gap-4 text-[#0F0842]">
-                    <Layers className="w-12 h-12" />
-                    <p className="text-sm font-bold uppercase tracking-widest">No Collections Found</p>
+                  <div className="py-20 text-center opacity-10 flex flex-col items-center gap-6 text-white">
+                    <Layers className="w-16 h-16" />
+                    <p className="text-sm font-bold uppercase tracking-[0.5em]">No Collections Found</p>
                   </div>
                 ) : (
                   collections.map(col => (
-                    <div key={col.name} className="flex items-center justify-between p-4 bg-white border border-[#0F0842]/5 rounded-2xl group hover:border-[#0F0842]/20 transition-all shadow-sm">
-                      <div className="flex items-center gap-4">
-                        <div className="p-3 bg-[#E9D5FF] rounded-xl text-[#0F0842]">
-                          <Database className="w-5 h-5" />
+                    <div key={col.name} className="flex items-center justify-between p-6 bg-white/5 border border-white/5 rounded-[32px] group hover:border-white/20 transition-all shadow-xl">
+                      <div className="flex items-center gap-5">
+                        <div className="p-4 bg-purple-500/10 rounded-2xl text-purple-400">
+                          <Database className="w-6 h-6" />
                         </div>
                         <div>
-                          <h4 className="text-sm font-bold text-[#0F0842]">{col.name}</h4>
-                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{col.config.joins.length} Join Steps</p>
+                          <h4 className="text-base font-bold text-white mb-1">{col.name}</h4>
+                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em]">{col.config.joins.length} Join Steps</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => loadCollection(col)} className="px-4 py-2 bg-[#0F0842] text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-[#0F0842]/90 transition-all">Load</button>
-                        <button onClick={async () => {
-                          await axios.delete(`${API_BASE}/collections/${col.name}`);
-                          setCollections(prev => prev.filter(c => c.name !== col.name));
-                        }} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => loadCollection(col)} className="px-6 py-3 bg-white text-black text-[11px] font-black uppercase tracking-widest rounded-full hover:bg-gray-200 transition-all">Load</button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await axios.delete(`${API_BASE}/collections/${col.name}`);
+                              setCollections(prev => prev.filter(c => c.name !== col.name));
+                            } catch (err) {
+                              console.error("Delete failed:", err);
+                            }
+                          }}
+                          className="p-3 text-gray-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-2xl transition-all"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
                       </div>
                     </div>
                   ))
@@ -1110,24 +1146,24 @@ function App() {
       <AnimatePresence>
         {saveModal && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSaveModal(false)} className="absolute inset-0 bg-[#0F0842]/20 backdrop-blur-sm" />
-            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-md glass-card p-8 bg-white border-[#0F0842]/10 shadow-3xl">
-              <h3 className="text-xl font-black text-[#0F0842] mb-2">Save Pipeline</h3>
-              <p className="text-sm text-slate-500 mb-6 font-medium">Store current configuration as a collection.</p>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Collection Name</label>
-                  <input 
-                    type="text" 
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSaveModal(false)} className="absolute inset-0 bg-black/40 backdrop-blur-md" />
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-md glass-card p-10 ring-1 ring-white/10 shadow-3xl">
+              <h3 className="text-2xl font-black text-white mb-2">Save Pipeline</h3>
+              <p className="text-sm text-gray-500 mb-8 font-medium">Store current configuration as a collection.</p>
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-500">Collection Name</label>
+                  <input
+                    type="text"
                     value={collectionName}
                     onChange={(e) => setCollectionName(e.target.value)}
                     placeholder="e.g. Q1 Sales Harmonization"
-                    className="w-full p-4 bg-slate-50 border border-[#0F0842]/10 rounded-2xl outline-none focus:border-[#0F0842] transition-all font-bold text-sm"
+                    className="glass-input !rounded-2xl !p-5 font-bold text-base"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-4 mt-6">
-                  <button onClick={() => setSaveModal(false)} className="py-3 font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-all">Cancel</button>
-                  <button onClick={saveCollection} className="py-3 font-bold bg-[#0F0842] text-white rounded-xl shadow-xl shadow-[#0F0842]/20 hover:scale-[1.02] transition-all">Save Config</button>
+                <div className="grid grid-cols-2 gap-4 mt-8">
+                  <button onClick={() => setSaveModal(false)} className="py-4 font-bold text-gray-400 hover:bg-white/5 rounded-2xl transition-all border border-white/5">Cancel</button>
+                  <button onClick={saveCollection} className="py-4 font-bold bg-blue-600 text-white rounded-2xl shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 transition-all">Save Config</button>
                 </div>
               </div>
             </motion.div>
@@ -1135,9 +1171,9 @@ function App() {
         )}
       </AnimatePresence>
 
-      <footer className="max-w-7xl mx-auto mt-24 pt-12 border-t border-[#0F0842]/5 opacity-30 text-center">
-         <p className="text-[10px] font-black uppercase tracking-[0.8em] text-[#0F0842]/40 mb-2">Designed for Intelligence</p>
-         <p className="text-[8px] font-bold text-[#0F0842]/30">ForgeJoin Unified Pipeline Logic v3.0.42 • Restricted Distribution</p>
+      <footer className="max-w-7xl mx-auto mt-32 pb-16 border-t border-white/5 opacity-40 text-center">
+        <p className="text-[10px] font-black uppercase tracking-[0.8em] text-white/60 mb-3">Designed for Intelligence</p>
+        <p className="text-[9px] font-bold text-gray-500 tracking-wider">ForgeJoin Unified Pipeline Logic v3.1.0 • Next-Gen Synthesis Engine</p>
       </footer>
     </div>
   );

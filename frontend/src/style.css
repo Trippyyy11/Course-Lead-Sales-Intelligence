@@ -3,82 +3,86 @@
 
 @theme {
   --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --color-primary: #0F0842;
-  --color-secondary: #E9D5FF;
-  --color-accent: #f43f5e;
+  --color-primary: #000000;
+  --color-secondary: #1a73e8;
+  --color-accent: #8ab4f8;
   --border-width-400: 2px;
+  --border-width-400: 2px;
+  --shadow-3xl: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  --card-glow: 0 0 50px -10px rgba(37, 99, 235, 0.4);
 }
 
 :root {
-  --glass-bg: rgba(255, 255, 255, 0.85);
-  --glass-border: rgba(15, 8, 66, 0.1);
-  --deep-navy: #0F0842;
-  --lavender: #E9D5FF;
+  --bg-deep: #000000;
+  --google-blue: #1a73e8;
+  --accent-blue: #8ab4f8;
+  --glass-nav: rgba(32, 33, 36, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.1);
 }
 
 body {
-  @apply bg-[#f3f4f6] text-[#0F0842] font-sans min-h-screen antialiased;
+  @apply bg-[#000000] text-white font-sans min-h-screen antialiased selection:bg-blue-500/30 overflow-x-hidden;
   background-image:
-    radial-gradient(at 0% 0%, rgba(233, 213, 255, 0.4) 0, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(15, 8, 66, 0.05) 0, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(15, 8, 66, 0.03) 0, transparent 50%),
-    radial-gradient(at 0% 100%, rgba(233, 213, 255, 0.2) 0, transparent 50%);
+    radial-gradient(circle at 50% -20%, rgba(26, 115, 232, 0.4) 0%, transparent 60%),
+    radial-gradient(circle at 0% 20%, rgba(138, 180, 248, 0.1) 0%, transparent 40%),
+    radial-gradient(circle at 100% 20%, rgba(66, 133, 244, 0.1) 0%, transparent 40%),
+    radial-gradient(circle at 50% 100%, rgba(26, 115, 232, 0.1) 0%, transparent 50%);
   background-attachment: fixed;
 }
 
 .glass-card {
-  @apply bg-white/70 backdrop-blur-xl border-400 border-[#0F0842]/25 rounded-3xl shadow-xl shadow-[#0F0842]/5;
+  @apply bg-black/70 backdrop-blur-3xl border border-white/10 rounded-[40px] transition-all duration-500;
+  box-shadow: 0 0 40px -10px rgba(37, 99, 235, 0.3), inset 0 0 20px rgba(255, 255, 255, 0.02);
+}
+
+.glass-card:hover {
+  @apply border-white/20 bg-black/80;
+  box-shadow: 0 0 60px -10px rgba(37, 99, 235, 0.5), inset 0 0 30px rgba(255, 255, 255, 0.05);
+}
+
+.glass-subcard {
+  @apply bg-white/5 border border-white/5 rounded-3xl transition-all duration-300;
+  box-shadow: 0 4px 20px -5px rgba(37, 99, 235, 0.2);
+}
+
+.glass-subcard:hover {
+  @apply bg-white/10 border-white/10;
+  box-shadow: 0 8px 30px -5px rgba(37, 99, 235, 0.4);
+}
+
+.pill-nav {
+  @apply fixed top-6 left-1/2 -translate-x-1/2 flex items-center gap-2 px-2 py-2 bg-[#202124]/40 backdrop-blur-2xl border border-white/10 rounded-full z-[100] shadow-2xl;
 }
 
 .glass-input {
-  @apply bg-white/50 border border-[#0F0842]/10 rounded-xl px-4 py-2.5 outline-none focus:border-[#0F0842]/30 focus:bg-white transition-all text-sm w-full;
+  @apply bg-white/5 border border-white/10 rounded-2xl px-5 py-3 outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all text-sm w-full text-white placeholder:text-white/30;
 }
 
 .glass-button {
-  @apply relative overflow-hidden px-6 py-3 rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 cursor-pointer;
+  @apply relative overflow-hidden px-6 py-3 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 cursor-pointer;
 }
 
 .primary-gradient {
-  @apply bg-linear-to-br from-[#0F0842] to-[#2D246E] text-white shadow-lg shadow-[#0F0842]/20;
+  @apply bg-linear-to-br from-[#1a73e8] to-[#4285f4] text-white shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40;
+}
+
+.gemini-text {
+  @apply bg-clip-text text-transparent bg-linear-to-r from-[#8ab4f8] to-[#4285f4] font-black;
 }
 
 .table-glass {
-  @apply bg-white/40 border border-[#0F0842]/10 rounded-2xl overflow-hidden backdrop-blur-md;
+  @apply bg-black/40 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-md;
+  box-shadow: 0 0 30px rgba(26, 115, 232, 0.15);
 }
 
 .dropdown-menu {
-  @apply bg-white border border-[#0F0842]/10 rounded-2xl shadow-2xl;
-}
-
-/* Redesign Specifics */
-.stage-container {
-  @apply min-h-[60vh] flex flex-col;
-}
-
-.stepper-item {
-  @apply flex items-center gap-3 px-4 py-2 rounded-full transition-all duration-300;
-}
-
-.stepper-item.active {
-  @apply bg-[#E9D5FF] border border-[#0F0842]/10 text-[#0F0842] shadow-sm;
-}
-
-.stepper-item.completed {
-  @apply text-emerald-600 opacity-90;
-}
-
-.stepper-item.disabled {
-  @apply opacity-30;
-}
-
-.action-bar {
-  @apply fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-4 px-8 py-4 bg-white/70 backdrop-blur-xl border border-[#0F0842]/10 rounded-3xl shadow-2xl shadow-[#0F0842]/10 z-50;
+  @apply bg-[#1a1c1e] border-2 border-blue-500/20 rounded-3xl shadow-[0_20px_60px_-15px_rgba(0, 0, 0, 0.8)] backdrop-blur-3xl;
 }
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -90,9 +94,43 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  @apply bg-[#0F0842]/10 rounded-full hover:bg-[#0F0842]/20;
+  @apply bg-white/10 rounded-full hover:bg-white/20;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-[#0F0842]/10 rounded-full hover:bg-black/10;
+  @apply bg-white/10 rounded-full hover:bg-white/20;
+}
+
+/* Animations */
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+/* Toast Notifications */
+.toast-container {
+  @apply fixed top-8 right-8 z-[200] flex flex-col gap-4 items-end w-full max-w-sm pointer-events-none;
+}
+
+.toast-pill {
+  @apply pointer-events-auto flex items-center gap-3 px-6 py-4 rounded-full border backdrop-blur-2xl shadow-2xl transition-all duration-500 animate-[float_4s_ease-in-out_infinite];
+}
+
+.toast-success {
+  @apply bg-emerald-500/10 border-emerald-500/20 text-emerald-400;
+}
+
+.toast-error {
+  @apply bg-rose-500/10 border-rose-500/20 text-rose-400;
 }
