@@ -136,9 +136,9 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
 }
 
 const STAGES = [
-  { id: 0, name: 'Sources', icon: Database },
-  { id: 1, name: 'Pipeline', icon: Settings },
-  { id: 2, name: 'Review', icon: Table }
+  { id: 0, name: 'Data Sources', icon: Database },
+  { id: 1, name: 'Mapping Logic', icon: Settings },
+  { id: 2, name: 'Data Review', icon: Table }
 ];
 
 function Stepper({ currentStage, setCurrentStage, files }) {
@@ -1109,18 +1109,23 @@ function App() {
                   </div>
                 ) : (
                   collections.map(col => (
-                    <div key={col.name} className="flex items-center justify-between p-6 bg-white/5 border border-white/5 rounded-[32px] group hover:border-white/20 transition-all shadow-xl">
+                    <div key={col.name} className="flex items-center justify-between p-6 bg-[#2a2a2a] border border-[#333333] rounded-2xl group hover:border-[#444444] transition-all shadow-md">
                       <div className="flex items-center gap-5">
-                        <div className="p-4 bg-purple-500/10 rounded-2xl text-purple-400">
+                        <div className="p-4 bg-blue-500/10 rounded-2xl text-blue-400">
                           <Database className="w-6 h-6" />
                         </div>
                         <div>
-                          <h4 className="text-base font-bold text-white mb-1">{col.name}</h4>
-                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em]">{col.config.joins.length} Join Steps</p>
+                          <h4 className="text-[15px] font-bold text-white mb-1">{col.name}</h4>
+                          <p className="text-[11px] text-gray-500 font-medium italic">{JSON.stringify(col.config.joins.length)} join steps</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <button onClick={() => loadCollection(col)} className="px-6 py-3 bg-white text-black text-[11px] font-black uppercase tracking-widest rounded-full hover:bg-gray-200 transition-all">Load</button>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => loadCollection(col)} 
+                          className="px-5 py-2.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-500 transition-all active:scale-95"
+                        >
+                          Load
+                        </button>
                         <button
                           onClick={async () => {
                             try {
@@ -1130,7 +1135,7 @@ function App() {
                               console.error("Delete failed:", err);
                             }
                           }}
-                          className="p-3 text-gray-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-2xl transition-all"
+                          className="p-3 text-gray-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
                         >
                           <Trash2 className="w-5 h-5" />
                         </button>
@@ -1149,8 +1154,8 @@ function App() {
         {saveModal && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSaveModal(false)} className="absolute inset-0 bg-black/40 backdrop-blur-md" />
-            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-md glass-card p-10 ring-1 ring-white/10 shadow-3xl">
-              <h3 className="text-2xl font-black text-white mb-2">Save Pipeline</h3>
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="w-full max-w-md glass-card p-10 relative z-10">
+              <h3 className="text-2xl font-black text-white mb-6">Save Pipeline</h3>
               <p className="text-sm text-gray-500 mb-8 font-medium">Store current configuration as a collection.</p>
               <div className="space-y-6">
                 <div className="space-y-3">
