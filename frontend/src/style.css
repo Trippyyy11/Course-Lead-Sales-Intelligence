@@ -6,6 +6,7 @@
   --color-primary: #0F0842;
   --color-secondary: #E9D5FF;
   --color-accent: #f43f5e;
+  --border-width-400: 2px;
 }
 
 :root {
@@ -17,7 +18,7 @@
 
 body {
   @apply bg-[#f3f4f6] text-[#0F0842] font-sans min-h-screen antialiased;
-  background-image: 
+  background-image:
     radial-gradient(at 0% 0%, rgba(233, 213, 255, 0.4) 0, transparent 50%),
     radial-gradient(at 100% 0%, rgba(15, 8, 66, 0.05) 0, transparent 50%),
     radial-gradient(at 100% 100%, rgba(15, 8, 66, 0.03) 0, transparent 50%),
@@ -26,7 +27,7 @@ body {
 }
 
 .glass-card {
-  @apply bg-white/70 backdrop-blur-xl border border-[#0F0842]/10 rounded-3xl shadow-xl shadow-[#0F0842]/5;
+  @apply bg-white/70 backdrop-blur-xl border-400 border-[#0F0842]/25 rounded-3xl shadow-xl shadow-[#0F0842]/5;
 }
 
 .glass-input {
@@ -83,6 +84,7 @@ body {
 ::-webkit-scrollbar-track {
   @apply bg-transparent;
 }
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
 }

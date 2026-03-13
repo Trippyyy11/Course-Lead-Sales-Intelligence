@@ -142,7 +142,7 @@ const STAGES = [
 
 function Stepper({ currentStage, setCurrentStage, files }) {
   return (
-    <div className="flex items-center gap-4 bg-white/50 border border-[#0F0842]/10 rounded-full px-6 py-3 backdrop-blur-xl shadow-sm">
+    <div className="flex items-center gap-4 bg-white/50 border-400 border-[#05011a]/20 rounded-full px-6 py-3 backdrop-blur-xl shadow-sm">
       {STAGES.map((s, i) => (
         <React.Fragment key={s.id}>
            <button
@@ -178,7 +178,7 @@ function ActionBar({ currentStage, setCurrentStage, files, executeChain, execute
         type="button"
         disabled={currentStage === 0}
         onClick={() => setCurrentStage(prev => prev - 1)}
-        className="glass-button bg-white text-slate-600 hover:bg-slate-50 flex items-center gap-2 border border-[#0F0842]/10 shadow-sm"
+        className="glass-button bg-white text-slate-600 hover:bg-slate-50 flex items-center gap-2 border-400 border-[#0F0842]/10 shadow-sm"
        >
          <ArrowRight className="w-4 h-4 rotate-180" /> Previous
        </button>
@@ -212,7 +212,7 @@ function ActionBar({ currentStage, setCurrentStage, files, executeChain, execute
   );
 }
 
-function SourcesView({ files, handleFileUpload, uploadLoading }) {
+function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete }) {
   return (
     <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
@@ -227,7 +227,7 @@ function SourcesView({ files, handleFileUpload, uploadLoading }) {
               type="file" multiple onChange={handleFileUpload} accept=".csv,.xls,.xlsx"
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
             />
-            <div className="border-2 border-dashed border-[#0F0842]/10 rounded-3xl p-12 text-center group-hover:border-[#0F0842]/30 group-hover:bg-[#E9D5FF]/20 transition-all">
+            <div className="border-400 border-dashed border-[#0F0842]/10 rounded-3xl p-12 text-center group-hover:border-[#0F0842]/30 group-hover:bg-[#E9D5FF]/20 transition-all">
               <div className="w-20 h-20 bg-[#0F0842]/5 rounded-full flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
                 <FileText className="w-10 h-10 text-[#0F0842]" />
               </div>
@@ -269,7 +269,7 @@ function SourcesView({ files, handleFileUpload, uploadLoading }) {
                     key={f.id}
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className="flex items-center justify-between p-4 bg-white border border-[#0F0842]/5 rounded-2xl group hover:border-[#0F0842]/20 transition-all shadow-sm"
+                    className="flex items-center justify-between p-4 bg-white border-400 border-[#0F0842]/5 rounded-2xl group hover:border-[#0F0842]/20 transition-all shadow-sm"
                   >
                     <div className="flex items-center gap-4">
                       <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-600">
@@ -280,7 +280,13 @@ function SourcesView({ files, handleFileUpload, uploadLoading }) {
                         <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{f.columns.length} Columns</p>
                       </div>
                     </div>
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                    <button 
+                      type="button"
+                      onClick={() => handleFileDelete(f.id)}
+                      className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
                   </motion.div>
                 ))
                )}
@@ -349,7 +355,7 @@ function PipelineBuilder({
                               placeholder="Choose starting point"
                             />
                            ) : (
-                            <div className="p-4 bg-[#E9D5FF] rounded-2xl border border-[#0F0842]/5 shadow-sm">
+                            <div className="p-4 bg-[#E9D5FF] rounded-2xl border-400 border-[#0F0842]/5 shadow-sm">
                                 <p className="text-[10px] font-black text-[#0F0842] uppercase tracking-widest mb-1">Source Dataset</p>
                                 <span className="text-xs font-bold italic text-[#0F0842]/70">Previous Step Output</span>
                              </div>
@@ -433,7 +439,7 @@ function PipelineBuilder({
                               exit={{ height: 0, opacity: 0 }}
                               className="mt-6 space-y-8 overflow-hidden"
                             >
-                               <div className="bg-white/5 border border-white/5 rounded-3xl p-8 space-y-8">
+                               <div className="bg-white/5 border-400 border-white/5 rounded-3xl p-8 space-y-8">
                                   {/* Drop Columns */}
                                   <div>
                                     <h5 className="text-[10px] font-black text-rose-500 uppercase tracking-widest mb-4">Exclude Attributes</h5>
@@ -477,7 +483,7 @@ function PipelineBuilder({
                                         />
                                         <div className="space-y-2">
                                            {Object.entries(join.transformations.rename).map(([old, curr]) => (
-                                              <div key={old} className="flex items-center gap-3 p-3 bg-white/5 border border-white/5 rounded-2xl">
+                                              <div key={old} className="flex items-center gap-3 p-3 bg-white/5 border-400 border-white/5 rounded-2xl">
                                                 <span className="text-[10px] font-mono text-slate-500 truncate w-24">#{old}</span>
                                                 <input 
                                                   value={curr}
@@ -502,7 +508,7 @@ function PipelineBuilder({
                                         />
                                         <div className="space-y-2">
                                            {Object.entries(join.transformations.cast).map(([col, type]) => (
-                                              <div key={col} className="flex items-center justify-between p-3 bg-white border border-[#0F0842]/5 rounded-2xl shadow-sm">
+                                              <div key={col} className="flex items-center justify-between p-3 bg-white border-400 border-[#0F0842]/5 rounded-2xl shadow-sm">
                                                 <span className="text-[10px] font-mono text-slate-500 truncate w-24">#{col}</span>
                                                 <select 
                                                   value={type}
@@ -560,7 +566,7 @@ function ReviewView({ previewData, metrics, saveProject }) {
                    ) : (
                       <table className="w-full border-collapse text-left">
                         <thead>
-                          <tr className="bg-slate-50 shadow-sm z-10 sticky top-0 border-b border-[#0F0842]/10">
+                          <tr className="bg-slate-50 shadow-sm z-10 sticky top-0 border-b-400 border-[#0F0842]/10">
                             {previewData.columns.map(col => (
                               <th key={col} className="px-6 py-4 text-[10px] font-black text-[#0F0842] uppercase tracking-widest whitespace-nowrap">{col}</th>
                             ))}
@@ -590,7 +596,7 @@ function ReviewView({ previewData, metrics, saveProject }) {
                         { label: "Missing Values", value: metrics.null_count, color: "bg-amber-500/10 text-amber-600", icon: AlertCircle },
                         { label: "Duplicates", value: metrics.duplicate_count, color: "bg-rose-500/10 text-rose-600", icon: Trash2 },
                      ].map((m, i) => (
-                        <div key={i} className={`p-4 rounded-2xl border border-[#0F0842]/5 flex items-center justify-between`}>
+                        <div key={i} className={`p-4 rounded-2xl border-400 border-[#0F0842]/5 flex items-center justify-between`}>
                            <div>
                               <p className="text-[10px] font-black uppercase text-slate-500 tracking-tighter mb-1">{m.label}</p>
                               <span className={`text-xl font-black ${m.color.split(' ')[1]}`}>{m.value}</span>
@@ -604,7 +610,7 @@ function ReviewView({ previewData, metrics, saveProject }) {
                 )}
              </div>
 
-             <button type="button" onClick={saveProject} className="w-full py-4 bg-white border border-[#0F0842]/10 rounded-2xl flex items-center justify-center gap-3 text-xs font-black uppercase tracking-widest text-[#0F0842]/60 hover:bg-slate-50 transition-all shadow-sm">
+             <button type="button" onClick={saveProject} className="w-full py-4 bg-white border-400 border-[#0F0842]/10 rounded-2xl flex items-center justify-center gap-3 text-xs font-black uppercase tracking-widest text-[#0F0842]/60 hover:bg-slate-50 transition-all shadow-sm">
                 <Download className="w-4 h-4" /> Export Config
              </button>
           </aside>
@@ -660,6 +666,23 @@ function App() {
       setError(err.response?.data?.detail || 'Import failed');
     } finally {
       setUploadLoading(false);
+    }
+  };
+
+  const handleFileDelete = async (fileId) => {
+    try {
+      await axios.delete(`${API_BASE}/file/${fileId}`);
+      setFiles(prev => prev.filter(f => f.id !== fileId));
+      setSuccess('File deleted successfully');
+      
+      // Also clean up any join steps that might be using this file
+      setJoins(prev => prev.map(j => {
+        if (j.fileA === fileId) return { ...j, fileA: '', keysA: [''] };
+        if (j.fileB === fileId) return { ...j, fileB: '', keysB: [''] };
+        return j;
+      }));
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Delete failed');
     }
   };
 
@@ -887,7 +910,7 @@ function App() {
               exit={{ opacity: 0, x: -20 }}
               transition={{ duration: 0.3 }}
             >
-              {currentStage === 0 && <SourcesView files={files} handleFileUpload={handleFileUpload} uploadLoading={uploadLoading} />}
+              {currentStage === 0 && <SourcesView files={files} handleFileUpload={handleFileUpload} uploadLoading={uploadLoading} handleFileDelete={handleFileDelete} />}
               {currentStage === 1 && (
                 <PipelineBuilder 
                   joins={joins} 

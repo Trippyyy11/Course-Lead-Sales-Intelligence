@@ -56,6 +56,13 @@ async def get_columns(file_id: str):
         raise HTTPException(status_code=404, detail="File not found")
     return {"columns": storage[file_id].columns.tolist()}
 
+@app.delete("/file/{file_id}")
+async def delete_file(file_id: str):
+    if file_id not in storage:
+        raise HTTPException(status_code=404, detail="File not found")
+    del storage[file_id]
+    return {"message": "File deleted successfully"}
+
 
 
 from pydantic import BaseModel
