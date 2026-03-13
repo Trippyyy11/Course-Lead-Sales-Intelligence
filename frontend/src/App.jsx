@@ -190,6 +190,10 @@ function ActionBar({ currentStage, setCurrentStage, files, executeChain, execute
           type="button"
           disabled={files.length < 2}
           onClick={() => {
+            if (currentStage === 0 && files.length < 2) {
+              setError("Please upload at least 2 datasets to continue building the pipeline.");
+              return;
+            }
             if (currentStage === 1) executeChain();
             else setCurrentStage(prev => prev + 1);
           }}
@@ -212,7 +216,7 @@ function ActionBar({ currentStage, setCurrentStage, files, executeChain, execute
   );
 }
 
-function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete }) {
+function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete, deleteConfirm, setDeleteConfirm }) {
   return (
     <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
@@ -282,7 +286,7 @@ function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete 
                     </div>
                     <button 
                       type="button"
-                      onClick={() => handleFileDelete(f.id)}
+                      onClick={() => setDeleteConfirm({ id: f.id, name: f.name })}
                       className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
                     >
                       <Trash2 className="w-5 h-5" />
@@ -293,6 +297,52 @@ function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete 
             </div>
         </section>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => setDeleteConfirm(null)}
+              className="absolute inset-0 bg-[#0F0842]/20 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-md glass-card p-8 bg-white border-[#0F0842]/10 shadow-3xl"
+            >
+              <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center mb-6">
+                <Trash2 className="w-8 h-8 text-rose-500" />
+              </div>
+              <h3 className="text-xl font-black text-[#0F0842] mb-2">Delete Dataset?</h3>
+              <p className="text-sm text-slate-500 mb-8 font-medium">
+                Are you sure you want to remove <span className="font-bold text-[#0F0842]">"{deleteConfirm.name}"</span>? This action cannot be undone and will affect any joins using this file.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <button 
+                  onClick={() => setDeleteConfirm(null)}
+                  className="py-3 px-6 rounded-xl font-bold text-[#0F0842]/60 hover:bg-slate-50 transition-all border border-[#0F0842]/5"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    handleFileDelete(deleteConfirm.id);
+                    setDeleteConfirm(null);
+                  }}
+                  className="py-3 px-6 rounded-xl font-bold bg-rose-500 text-white hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -487,7 +537,8 @@ function PipelineBuilder({
                                                 <span className="text-[10px] font-mono text-slate-500 truncate w-24">#{old}</span>
                                                 <input 
                                                   value={curr}
-                                                  className="bg-transparent text-xs font-bold text-white outline-none flex-1 border-b border-white/10 focus:border-indigo-500 transition-colors"
+                                                  className="bg-transparent text-xs font-bold text-[#0F0842] outline-none flex-1 border-b border-[#0F0842]/10 focus:border-[#0F0842] transition-colors placeholder:text-slate-300"
+                                                  placeholder="New name..."
                                                   onChange={(e) => updateTransformation(join.id, 'rename', { ...join.transformations.rename, [old]: e.target.value })}
                                                 />
                                                 <button type="button" onClick={() => {
@@ -642,10 +693,39 @@ function App() {
 
   const [metrics, setMetrics] = useState(null); // Health metrics for final result
   const [showTransforms, setShowTransforms] = useState({}); // Track expanded transforms by joinId
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { id: string, name: string }
+
+  useEffect(() => {
+    const fetchFiles = async () => {
+      try {
+        const resp = await axios.get(`${API_BASE}/files`);
+        setFiles(resp.data.files);
+      } catch (err) {
+        console.error('Failed to fetch files:', err);
+      }
+    };
+    fetchFiles();
+  }, []);
 
   const [previewData, setPreviewData] = useState(null);
   const [finalResultId, setFinalResultId] = useState(null);
   const [activeColumns, setActiveColumns] = useState([]);
+  const [collections, setCollections] = useState([]);
+  const [showCollections, setShowCollections] = useState(false);
+  const [saveModal, setSaveModal] = useState(false);
+  const [collectionName, setCollectionName] = useState("");
+
+  useEffect(() => {
+    const fetchCollections = async () => {
+      try {
+        const resp = await axios.get(`${API_BASE}/collections`);
+        setCollections(resp.data.collections);
+      } catch (err) {
+        console.error('Failed to fetch collections:', err);
+      }
+    };
+    fetchCollections();
+  }, []);
 
   const handleFileUpload = async (e) => {
     const uploadedFiles = Array.from(e.target.files);
@@ -672,18 +752,53 @@ function App() {
   const handleFileDelete = async (fileId) => {
     try {
       await axios.delete(`${API_BASE}/file/${fileId}`);
-      setFiles(prev => prev.filter(f => f.id !== fileId));
-      setSuccess('File deleted successfully');
-      
-      // Also clean up any join steps that might be using this file
-      setJoins(prev => prev.map(j => {
-        if (j.fileA === fileId) return { ...j, fileA: '', keysA: [''] };
-        if (j.fileB === fileId) return { ...j, fileB: '', keysB: [''] };
-        return j;
-      }));
     } catch (err) {
-      setError(err.response?.data?.detail || 'Delete failed');
+      // If 404, the file is already gone from backend (likely server restart)
+      // We still want to remove it from frontend state
+      if (err.response?.status !== 404) {
+        setError(err.response?.data?.detail || 'Delete failed');
+        return;
+      }
     }
+
+    setFiles(prev => prev.filter(f => f.id !== fileId));
+    setSuccess('File removed successfully');
+    
+    // Also clean up any join steps that might be using this file
+    setJoins(prev => prev.map(j => {
+      if (j.fileA === fileId) return { ...j, fileA: '', keysA: [''] };
+      if (j.fileB === fileId) return { ...j, fileB: '', keysB: [''] };
+      return j;
+    }));
+  };
+
+  const saveCollection = async () => {
+    if (!collectionName.trim()) {
+      setError("Please enter a collection name.");
+      return;
+    }
+    const config = { joins };
+    try {
+      await axios.post(`${API_BASE}/collections`, {
+        name: collectionName,
+        config: config
+      });
+      setSuccess(`Collection "${collectionName}" saved!`);
+      setSaveModal(false);
+      setCollectionName("");
+      // Refresh list
+      const resp = await axios.get(`${API_BASE}/collections`);
+      setCollections(resp.data.collections);
+    } catch (err) {
+      setError("Failed to save collection.");
+    }
+  };
+
+  const loadCollection = (col) => {
+    setJoins(col.config.joins);
+    setSuccess(`Collection "${col.name}" loaded successfully.`);
+    setShowCollections(false);
+    setCurrentStage(1); // Jump to pipeline
   };
 
   const addJoinStep = () => {
@@ -828,22 +943,23 @@ function App() {
   const getStepLeftColumns = (stepIndex, currentJoin) => {
     if (stepIndex === 0) return getFileColumns(currentJoin.fileA);
     
-    // If we have real results from a previous execution, use them? 
-    // Actually, execution usually gives the *final* columns. 
-    // Let's stick to a robust heuristic: Union of all files involved in preceding steps.
-    const involvedFiles = new Set();
+    // Heuristic: Process all previous steps sequentially to determine current schema
+    let currentCols = [];
+    
     for (let i = 0; i < stepIndex; i++) {
         const step = joins[i];
-        if (i === 0 && step.fileA) involvedFiles.add(step.fileA);
-        if (step.fileB) involvedFiles.add(step.fileB);
+        const colsA = i === 0 ? getFileColumns(step.fileA) : currentCols;
+        const colsB = getFileColumns(step.fileB);
+        
+        // Union of columns (Join logic)
+        let combined = [...new Set([...colsA, ...colsB])];
+        
+        // Apply transformations (Drops and Renames)
+        const renamed = combined.map(c => step.transformations.rename[c] || c);
+        currentCols = renamed.filter(c => !step.transformations.drop.includes(c));
     }
 
-    const allCols = [];
-    involvedFiles.forEach(fId => {
-        allCols.push(...getFileColumns(fId));
-    });
-
-    return [...new Set(allCols)].sort();
+    return [...new Set(currentCols)].sort();
   };
 
   const handleDownload = () => {
@@ -878,10 +994,12 @@ function App() {
         <Stepper currentStage={currentStage} setCurrentStage={setCurrentStage} files={files} />
         
         <div className="flex items-center gap-3">
-          <label className="cursor-pointer glass-button !py-3 !px-6 text-[10px] bg-white hover:bg-slate-50 text-[#0F0842] flex items-center gap-2 border border-[#0F0842]/10 uppercase tracking-widest shadow-xl shadow-[#0F0842]/5">
-            <Upload className="w-4 h-4" /> Open Project
-            <input type="file" className="hidden" accept=".forge" onChange={loadProject} />
-          </label>
+          <button onClick={() => setShowCollections(true)} className="glass-button !py-3 !px-6 text-[10px] bg-white hover:bg-slate-50 text-[#0F0842] flex items-center gap-2 border border-[#0F0842]/10 uppercase tracking-widest shadow-xl shadow-[#0F0842]/5">
+            <Layers className="w-4 h-4 text-emerald-600" /> Library
+          </button>
+          <button onClick={() => setSaveModal(true)} className="glass-button !py-3 !px-6 text-[10px] bg-[#0F0842] text-white hover:bg-[#0F0842]/90 flex items-center gap-2 uppercase tracking-widest shadow-xl shadow-[#0F0842]/20">
+            <Plus className="w-4 h-4" /> Save Collection
+          </button>
         </div>
       </header>
 
@@ -910,7 +1028,7 @@ function App() {
               exit={{ opacity: 0, x: -20 }}
               transition={{ duration: 0.3 }}
             >
-              {currentStage === 0 && <SourcesView files={files} handleFileUpload={handleFileUpload} uploadLoading={uploadLoading} handleFileDelete={handleFileDelete} />}
+              {currentStage === 0 && <SourcesView files={files} handleFileUpload={handleFileUpload} uploadLoading={uploadLoading} handleFileDelete={handleFileDelete} deleteConfirm={deleteConfirm} setDeleteConfirm={setDeleteConfirm} />}
               {currentStage === 1 && (
                 <PipelineBuilder 
                   joins={joins} 
@@ -944,6 +1062,78 @@ function App() {
         finalResultId={finalResultId}
       />
 
+      {/* Collections Library Modal */}
+      <AnimatePresence>
+        {showCollections && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowCollections(false)} className="absolute inset-0 bg-[#0F0842]/20 backdrop-blur-sm" />
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-2xl glass-card p-8 bg-white border-[#0F0842]/10 shadow-3xl">
+              <div className="flex items-center justify-between mb-8">
+                <h3 className="text-xl font-black text-[#0F0842]">Stored Collections</h3>
+                <button onClick={() => setShowCollections(false)} className="p-2 hover:bg-slate-50 rounded-xl transition-all text-slate-400"><X className="w-5 h-5" /></button>
+              </div>
+              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                {collections.length === 0 ? (
+                  <div className="py-12 text-center opacity-30 flex flex-col items-center gap-4 text-[#0F0842]">
+                    <Layers className="w-12 h-12" />
+                    <p className="text-sm font-bold uppercase tracking-widest">No Collections Found</p>
+                  </div>
+                ) : (
+                  collections.map(col => (
+                    <div key={col.name} className="flex items-center justify-between p-4 bg-white border border-[#0F0842]/5 rounded-2xl group hover:border-[#0F0842]/20 transition-all shadow-sm">
+                      <div className="flex items-center gap-4">
+                        <div className="p-3 bg-[#E9D5FF] rounded-xl text-[#0F0842]">
+                          <Database className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-[#0F0842]">{col.name}</h4>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{col.config.joins.length} Join Steps</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => loadCollection(col)} className="px-4 py-2 bg-[#0F0842] text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-[#0F0842]/90 transition-all">Load</button>
+                        <button onClick={async () => {
+                          await axios.delete(`${API_BASE}/collections/${col.name}`);
+                          setCollections(prev => prev.filter(c => c.name !== col.name));
+                        }} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Save Collection Modal */}
+      <AnimatePresence>
+        {saveModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSaveModal(false)} className="absolute inset-0 bg-[#0F0842]/20 backdrop-blur-sm" />
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-md glass-card p-8 bg-white border-[#0F0842]/10 shadow-3xl">
+              <h3 className="text-xl font-black text-[#0F0842] mb-2">Save Pipeline</h3>
+              <p className="text-sm text-slate-500 mb-6 font-medium">Store current configuration as a collection.</p>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Collection Name</label>
+                  <input 
+                    type="text" 
+                    value={collectionName}
+                    onChange={(e) => setCollectionName(e.target.value)}
+                    placeholder="e.g. Q1 Sales Harmonization"
+                    className="w-full p-4 bg-slate-50 border border-[#0F0842]/10 rounded-2xl outline-none focus:border-[#0F0842] transition-all font-bold text-sm"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4 mt-6">
+                  <button onClick={() => setSaveModal(false)} className="py-3 font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-all">Cancel</button>
+                  <button onClick={saveCollection} className="py-3 font-bold bg-[#0F0842] text-white rounded-xl shadow-xl shadow-[#0F0842]/20 hover:scale-[1.02] transition-all">Save Config</button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <footer className="max-w-7xl mx-auto mt-24 pt-12 border-t border-[#0F0842]/5 opacity-30 text-center">
          <p className="text-[10px] font-black uppercase tracking-[0.8em] text-[#0F0842]/40 mb-2">Designed for Intelligence</p>

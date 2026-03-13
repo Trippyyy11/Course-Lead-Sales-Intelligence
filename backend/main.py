@@ -5,6 +5,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -20,6 +21,38 @@ app.add_middleware(
 # In-memory storage for DataFrames
 # In a production app, use a proper session/cache store like Redis
 storage: Dict[str, pd.DataFrame] = {}
+metadata: Dict[str, Dict[str, Any]] = {}
+
+@app.get("/files")
+async def get_files():
+    return {"files": list(metadata.values())}
+
+collections: Dict[str, Dict[str, Any]] = {}
+
+class CollectionSchema(BaseModel):
+    name: str
+    config: Dict[str, Any]
+
+class JoinTransformations(BaseModel):
+    drop: Optional[List[str]] = None
+    rename: Optional[Dict[str, str]] = None
+    cast: Optional[Dict[str, str]] = None
+
+@app.get("/collections")
+async def get_collections():
+    return {"collections": list(collections.values())}
+
+@app.post("/collections")
+async def save_collection(collection: CollectionSchema):
+    collections[collection.name] = collection.dict()
+    return {"message": f"Collection '{collection.name}' saved successfully"}
+
+@app.delete("/collections/{name}")
+async def delete_collection(name: str):
+    if name not in collections:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    del collections[name]
+    return {"message": f"Collection '{name}' deleted successfully"}
 
 @app.post("/upload")
 async def upload_files(files: List[UploadFile] = File(...)):
@@ -40,11 +73,13 @@ async def upload_files(files: List[UploadFile] = File(...)):
                 raise HTTPException(status_code=400, detail=f"File {file.filename} is empty.")
             
             storage[file_id] = df
-            uploaded_info.append({
+            file_info = {
                 "id": file_id,
                 "name": file.filename,
                 "columns": df.columns.tolist()
-            })
+            }
+            metadata[file_id] = file_info
+            uploaded_info.append(file_info)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error processing {file.filename}: {str(e)}")
             
@@ -61,16 +96,14 @@ async def delete_file(file_id: str):
     if file_id not in storage:
         raise HTTPException(status_code=404, detail="File not found")
     del storage[file_id]
+    if file_id in metadata:
+        del metadata[file_id]
     return {"message": "File deleted successfully"}
 
 
 
-from pydantic import BaseModel
 
-class JoinTransformations(BaseModel):
-    drop: Optional[List[str]] = None
-    rename: Optional[Dict[str, str]] = None
-    cast: Optional[Dict[str, str]] = None
+# Join logic continues...
 
 @app.post("/join")
 async def join_data(
