@@ -154,6 +154,28 @@ async def join_data(
                 ],
                 ignore_index=True,
             )
+        elif join_type == "left_anti":
+            merged_df = pd.merge(
+                df_a, 
+                df_b, 
+                left_on=keys_a, 
+                right_on=keys_b, 
+                how='left',
+                indicator=True,
+                suffixes=('_fileA', '_fileB')
+            )
+            merged_df = merged_df[merged_df['_merge'] == 'left_only'].drop(columns=['_merge'])
+        elif join_type == "right_anti":
+            merged_df = pd.merge(
+                df_a, 
+                df_b, 
+                left_on=keys_a, 
+                right_on=keys_b, 
+                how='right',
+                indicator=True,
+                suffixes=('_fileA', '_fileB')
+            )
+            merged_df = merged_df[merged_df['_merge'] == 'right_only'].drop(columns=['_merge'])
         else:
             merged_df = pd.merge(
                 df_a, 

@@ -7,8 +7,8 @@
   --color-secondary: #1a73e8;
   --color-accent: #8ab4f8;
   --border-width-400: 2px;
-  --border-width-400: 2px;
-  --shadow-3xl: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  --shadow-3xl: 0 25px 50px -12px rgba(0,0,0,0.5);
+  --shadow-menu: 0 20px 60px -15px rgba(0,0,0,0.8);
   --card-glow: 0 0 50px -10px rgba(37, 99, 235, 0.4);
 }
 

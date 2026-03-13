@@ -19,7 +19,79 @@ function cn(...inputs) {
 const API_BASE = 'http://localhost:8000';
 
 /** Custom Select Component for Premium UI */
-function CustomSelect({ label, value, options, onChange, placeholder, disabled, className }) {
+/** Visual Representation of Join Types */
+function JoinDiagram({ type }) {
+  const baseCircle = "stroke-white/10 fill-none transition-all duration-500";
+  const activeCircle = "fill-blue-500/40 stroke-blue-500/60 transition-all duration-500";
+  const dimCircle = "fill-white/5 stroke-white/10 transition-all duration-500";
+
+  return (
+    <div className="flex flex-col items-center gap-3 p-5 glass-subcard !bg-[#1a1c1e] justify-center relative group w-full max-w-[220px] h-[140px] mx-auto">
+      <svg width="100%" height="100%" viewBox="0 0 160 100" className="drop-shadow-[0_0_15px_rgba(37,99,235,0.2)]">
+        {/* Circle A */}
+        <circle
+          cx="60" cy="50" r="35"
+          className={cn(
+            baseCircle,
+            (type === 'left' || type === 'outer' || type === 'left_anti') ? activeCircle : (type === 'inner' ? "fill-none stroke-white/10" : dimCircle)
+          )}
+        />
+        {/* Circle B */}
+        <circle
+          cx="100" cy="50" r="35"
+          className={cn(
+            baseCircle,
+            (type === 'right' || type === 'outer' || type === 'right_anti') ? activeCircle : (type === 'inner' ? "fill-none stroke-white/10" : dimCircle)
+          )}
+        />
+
+        <defs>
+          <clipPath id="clipA"><circle cx="60" cy="50" r="35" /></clipPath>
+          <clipPath id="clipB"><circle cx="100" cy="50" r="35" /></clipPath>
+          <clipPath id="clipAOnly">
+            <rect x="0" y="0" width="160" height="100" />
+            <circle cx="100" cy="50" r="35" className="fill-black" />
+          </clipPath>
+          <clipPath id="clipBOnly">
+            <rect x="0" y="0" width="160" height="100" />
+            <circle cx="60" cy="50" r="35" className="fill-black" />
+          </clipPath>
+        </defs>
+
+        {/* Intersection Highlight */}
+        {(type === 'inner' || type === 'left' || type === 'right' || type === 'outer') && (
+          <circle
+            cx="60" cy="50" r="35"
+            clipPath="url(#clipB)"
+            className="fill-blue-500/80 stroke-none transition-all duration-500"
+          />
+        )}
+
+        {/* Anti-Join Highlights */}
+        {type === 'left_anti' && (
+          <circle cx="60" cy="50" r="35" className="fill-blue-500/80 stroke-none transition-all duration-500" clipPath="url(#clipAOnly)" />
+        )}
+        {type === 'right_anti' && (
+          <circle cx="100" cy="50" r="35" className="fill-blue-500/80 stroke-none transition-all duration-500" clipPath="url(#clipBOnly)" />
+        )}
+
+        {/* Append Logic */}
+        {type === 'append' && (
+          <g transform="translate(45, 15)">
+            <rect width="70" height="30" rx="4" className="fill-blue-500/40 stroke-blue-500/60 animate-bounce" />
+            <rect y="40" width="70" height="30" rx="4" className="fill-blue-500/80 stroke-blue-500/60" />
+          </g>
+        )}
+      </svg>
+      <div className="absolute top-2 left-2 flex gap-1 items-center opacity-30 group-hover:opacity-100 transition-opacity">
+        <div className="w-2 h-2 rounded-full bg-blue-500" />
+        <span className="text-[9px] font-black uppercase text-blue-500 tracking-wider">Visual Guide</span>
+      </div>
+    </div>
+  );
+}
+
+function CustomSelect({ label, value, options, onChange, placeholder, disabled, className, variant = 'blue' }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
   const [coords, setCoords] = useState({ top: 0, bottom: 0, left: 0, width: 0, position: 'bottom' });
@@ -113,19 +185,29 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
           disabled={disabled}
           onClick={() => setIsOpen(!isOpen)}
           className={cn(
-            "glass-input text-left flex items-center justify-between group",
+            "text-left flex items-center justify-between group transition-all duration-300",
+            "bg-[#2a2a2a] border rounded-xl px-4 py-2.5 text-sm w-full text-white placeholder:text-gray-500", // Manually expanded .glass-input logic for better control
             disabled && "opacity-50 cursor-not-allowed",
-            isOpen && "border-blue-500/50 bg-white/10"
+            isOpen
+              ? (variant === 'blue' ? "!border-blue-500/70 !bg-blue-500/15 ring-1 ring-blue-500/20" : "!border-green-500/70 !bg-green-500/20 ring-1 ring-green-500/20")
+              : (selectedOption
+                ? (variant === 'blue' ? "!border-yellow-500/50 !bg-yellow-500/10" : "!border-gray-500/60 !bg-gray-500/15")
+                : "border-[#333333] hover:border-white/20")
           )}
         >
-          <span className={cn("truncate font-bold", !selectedOption ? "text-white/30" : "text-white")}>
+          <span className={cn("truncate font-bold transition-colors", !selectedOption ? "text-white/30" : "text-white")}>
             {selectedOption ? selectedOption.label : placeholder}
           </span>
           <motion.div
             animate={{ rotate: isOpen ? 180 : 0 }}
             transition={{ duration: 0.2 }}
           >
-            <Settings className="w-3.5 h-3.5 text-gray-500 group-hover:text-blue-400" />
+            <Settings className={cn(
+              "w-3.5 h-3.5 transition-colors",
+              selectedOption
+                ? (variant === 'blue' ? "text-blue-400" : "text-green-400")
+                : "text-gray-500 group-hover:text-blue-400"
+            )} />
           </motion.div>
         </button>
 
@@ -385,8 +467,8 @@ function PipelineBuilder({
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-end">
-                  <div className="space-y-6">
+                <div className="space-y-10">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
                     {index === 0 ? (
                       <CustomSelect
                         label="Base Dataset (A)"
@@ -396,7 +478,7 @@ function PipelineBuilder({
                         placeholder="Choose starting point"
                       />
                     ) : (
-                      <div className="p-4 bg-white/5 rounded-2xl border-400 border-white/5 shadow-sm">
+                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5 shadow-sm">
                         <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Source Dataset</p>
                         <span className="text-xs font-bold italic text-white/50">Previous Step Output</span>
                       </div>
@@ -411,20 +493,39 @@ function PipelineBuilder({
                     />
                   </div>
 
-                  <div className="space-y-6">
-                    <CustomSelect
-                      label="Merge Strategy"
-                      value={join.type}
-                      options={[
-                        { value: 'inner', label: 'Inner Join (Intersect)' },
-                        { value: 'left', label: 'Left Join (Keep A)' },
-                        { value: 'right', label: 'Right Join (Keep B)' },
-                        { value: 'outer', label: 'Outer Join (Find All)' },
-                        { value: 'append', label: 'Append (Merge Same Columns)' }
-                      ]}
-                      onChange={(val) => updateJoin(join.id, 'type', val)}
-                      placeholder="Select Logic"
-                    />
+                  <div className="grid grid-cols-1 md:grid-cols-[2fr,1fr] gap-8 items-start pt-8 border-t border-white/5">
+                    <div className="space-y-6">
+                      <CustomSelect
+                        label="Merge Strategy"
+                        variant="indigo"
+                        value={join.type}
+                        options={[
+                          { value: 'inner', label: 'Matching records only' },
+                          { value: 'left', label: 'Dataset A + matching items from B' },
+                          { value: 'right', label: 'Dataset B + matching items from A' },
+                          { value: 'outer', label: 'Everything from both datasets' },
+                          { value: 'left_anti', label: 'Only in Dataset A (Unique)' },
+                          { value: 'right_anti', label: 'Only in Dataset B (Unique)' },
+                          { value: 'append', label: 'Stack rows from both datasets' }
+                        ]}
+                        onChange={(val) => updateJoin(join.id, 'type', val)}
+                        placeholder="Select Logic"
+                      />
+                      <div className="p-4 bg-blue-500/5 rounded-2xl border border-blue-500/10">
+                        <p className="text-[10px] text-blue-400 font-bold leading-relaxed">
+                          {join.type === 'inner' && "Keeps only rows where keys match in both datasets."}
+                          {join.type === 'left' && "Keeps all rows from A, adding matches from B where they exist."}
+                          {join.type === 'right' && "Keeps all rows from B, adding matches from A where they exist."}
+                          {join.type === 'outer' && "Combines everything. Fills gaps with empty values where matches aren't found."}
+                          {join.type === 'left_anti' && "Finds rows in A that have NO match in B."}
+                          {join.type === 'right_anti' && "Finds rows in B that have NO match in A."}
+                          {join.type === 'append' && "Combines files by stacking rows. Requires sharing same column names."}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <JoinDiagram type={join.type} />
+                    </div>
                   </div>
                 </div>
 
@@ -1120,8 +1221,8 @@ function App() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button 
-                          onClick={() => loadCollection(col)} 
+                        <button
+                          onClick={() => loadCollection(col)}
                           className="px-5 py-2.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-500 transition-all active:scale-95"
                         >
                           Load
