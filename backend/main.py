@@ -56,24 +56,7 @@ async def get_columns(file_id: str):
         raise HTTPException(status_code=404, detail="File not found")
     return {"columns": storage[file_id].columns.tolist()}
 
-from thefuzz import process
 
-@app.post("/analyze-schema")
-async def analyze_schema(file_a_id: str = Query(...), file_b_id: str = Query(...)):
-    if file_a_id not in storage or file_b_id not in storage:
-        raise HTTPException(status_code=404, detail="One or more files not found")
-    
-    cols_a = storage[file_a_id].columns.tolist()
-    cols_b = storage[file_b_id].columns.tolist()
-    
-    suggestions = []
-    for col_a in cols_a:
-        # Find best match in B for this column in A
-        match, score = process.extractOne(col_a, cols_b)
-        if score > 80: # High confidence threshold
-            suggestions.append({"key_a": col_a, "key_b": match, "confidence": score})
-            
-    return {"suggestions": suggestions}
 
 from pydantic import BaseModel
 
@@ -163,10 +146,21 @@ async def join_data(
                     merged_df = merged_df.rename(columns=valid_renames)
             
             if transforms.drop:
-                # Only drop columns that exist
-                existing_drops = [c for c in transforms.drop if c in merged_df.columns]
-                if existing_drops:
-                    merged_df = merged_df.drop(columns=existing_drops)
+                # Handle dropping columns, including those that might have suffixes after join
+                columns_to_drop = []
+                for col in transforms.drop:
+                    if col in merged_df.columns:
+                        columns_to_drop.append(col)
+                    
+                    # Also check for suffixed versions created by pandas join
+                    for suffix in ['_fileA', '_fileB']:
+                        suffixed_col = f"{col}{suffix}"
+                        if suffixed_col in merged_df.columns:
+                            columns_to_drop.append(suffixed_col)
+                
+                if columns_to_drop:
+                    # Use set to avoid double-dropping if names overlap
+                    merged_df = merged_df.drop(columns=list(set(columns_to_drop)))
         
         # Calculate Health Metrics
         metrics = {
