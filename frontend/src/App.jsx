@@ -5,7 +5,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Upload, Table, Download, Settings, FileText,
   AlertCircle, CheckCircle2, Plus, Trash2,
-  ArrowRight, Layers, Sparkles, Database, X
+  ArrowRight, Layers, Sparkles, Database, X,
+  Shredder
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -981,8 +982,9 @@ function App() {
       <header className="pill-nav max-w-fit mx-auto">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-3 pl-2 pr-4 border-r border-white/10 group cursor-pointer">
-            <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center ring-1 ring-white/20 group-hover:ring-blue-500/50 transition-all">
-              <Sparkles className="w-4 h-4 text-blue-500 animate-pulse" />
+            <div className="w-9 h-9 bg-black rounded-full flex items-center justify-center ring-1 ring-white/20 group-hover:ring-blue-500/50 transition-all">
+
+              <Shredder className="w-6 h-6 text-blue-500 animate-pulse" />
             </div>
             <span className="text-sm font-black tracking-tight text-white hidden sm:block">DataForge</span>
           </div>
@@ -993,8 +995,8 @@ function App() {
             <button onClick={() => setShowCollections(true)} className="px-5 py-2 text-[11px] font-bold text-gray-300 hover:text-white transition-colors">
               Library
             </button>
-            <button onClick={() => setSaveModal(true)} className="px-5 py-2 text-[11px] font-bold bg-blue-600 text-white rounded-full hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/20 active:scale-95">
-              Sign up
+            <button onClick={() => setSaveModal(true)} className="px-5 py-2 text-[14px] font-bold bg-blue-600 text-white rounded-full hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/20 active:scale-95">
+              Save Collection
             </button>
           </div>
         </div>
