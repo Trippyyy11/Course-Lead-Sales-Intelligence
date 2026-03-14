@@ -6,7 +6,7 @@ import {
   Upload, Table, Download, Settings, FileText,
   AlertCircle, CheckCircle2, Plus, Trash2,
   ArrowRight, Layers, Sparkles, Database, X,
-  Shredder
+  Shredder, User, Mail, Lock, ShieldCheck, LogOut
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -764,6 +764,178 @@ function ReviewView({ previewData, metrics, saveProject }) {
   );
 }
 
+function AuthScreen({ stage, setStage, loading, authData, setAuthData, onSubmit, error, success }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6 bg-[#0a0a0a] relative overflow-hidden">
+      {/* Background Orbs */}
+      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/10 rounded-full blur-[120px] animate-pulse" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-600/10 rounded-full blur-[120px] animate-pulse" />
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md relative z-10"
+      >
+        <div className="glass-card p-10 ring-1 ring-white/10 shadow-3xl">
+          {/* Auth Tabs */}
+          <div className="flex p-1.5 bg-white/5 rounded-2xl mb-10 ring-1 ring-white/5">
+            <button
+              onClick={() => setStage('login')}
+              className={cn(
+                "flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                stage === 'login' ? "bg-white text-black shadow-lg" : "text-gray-500 hover:text-white"
+              )}
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => setStage('signup')}
+              className={cn(
+                "flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                stage === 'signup' || stage === 'otp' ? "bg-white text-black shadow-lg" : "text-gray-500 hover:text-white"
+              )}
+            >
+              Sign Up
+            </button>
+          </div>
+
+          <div className="flex flex-col items-center mb-10">
+            <div className="w-16 h-16 bg-blue-600/10 rounded-2xl flex items-center justify-center mb-6 ring-1 ring-blue-500/20">
+              <ShieldCheck className="w-8 h-8 text-blue-500" />
+            </div>
+            <h2 className="text-3xl font-black text-white tracking-tight">
+              {stage === 'login' && 'Welcome Back'}
+              {stage === 'signup' && 'Create Account'}
+              {stage === 'otp' && 'Verify Identity'}
+            </h2>
+            <p className="text-gray-500 text-sm mt-2 font-medium text-center">
+              {stage === 'login' && 'Login to access your data pipeline'}
+              {stage === 'signup' && 'Start your data journey today'}
+              {stage === 'otp' && `Enter the code sent to ${authData.email}`}
+            </p>
+          </div>
+
+          <form onSubmit={onSubmit} className="space-y-6">
+            {stage === 'signup' && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">Full Name</label>
+                <div className="relative">
+                  <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                  <input
+                    required
+                    type="text"
+                    placeholder="John Doe"
+                    className="glass-input !pl-12 !rounded-2xl"
+                    value={authData.full_name}
+                    onChange={(e) => setAuthData({ ...authData, full_name: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
+
+            {(stage === 'login' || stage === 'signup' || stage === 'otp') && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">Email Address</label>
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                  <input
+                    required
+                    type="email"
+                    disabled={stage === 'otp'}
+                    placeholder="name@company.com"
+                    className="glass-input !pl-12 !rounded-2xl disabled:opacity-50"
+                    value={authData.email}
+                    onChange={(e) => setAuthData({ ...authData, email: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
+
+            {(stage === 'login' || stage === 'signup') && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                  <input
+                    required
+                    type="password"
+                    placeholder="••••••••"
+                    className="glass-input !pl-12 !rounded-2xl"
+                    value={authData.password}
+                    onChange={(e) => setAuthData({ ...authData, password: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
+
+            {stage === 'signup' && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">Confirm Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                  <input
+                    required
+                    type="password"
+                    placeholder="••••••••"
+                    className="glass-input !pl-12 !rounded-2xl"
+                    value={authData.confirm_password}
+                    onChange={(e) => setAuthData({ ...authData, confirm_password: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
+
+            {stage === 'otp' && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">6-Digit Code</label>
+                <input
+                  required
+                  type="text"
+                  maxLength={6}
+                  placeholder="000000"
+                  className="glass-input !rounded-2xl text-center text-2xl font-black tracking-[0.5em] !py-4"
+                  value={authData.otp}
+                  onChange={(e) => setAuthData({ ...authData, otp: e.target.value })}
+                />
+              </div>
+            )}
+
+            <button
+              disabled={loading}
+              className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-bold text-sm shadow-xl shadow-blue-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+            >
+              {loading ? (
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <>
+                  {stage === 'login' && 'Sign In'}
+                  {stage === 'signup' && 'Register Account'}
+                  {stage === 'otp' && 'Verify & Complete'}
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          </form>
+
+          <div className="mt-8 pt-8 border-t border-white/5 text-center">
+            {stage === 'login' ? (
+              <p className="text-xs text-gray-500 font-medium">
+                Don't have an account?{' '}
+                <button onClick={() => setStage('signup')} className="text-blue-500 font-bold hover:underline">Sign Up</button>
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500 font-medium">
+                Already have an account?{' '}
+                <button onClick={() => setStage('login')} className="text-blue-500 font-bold hover:underline">Sign In</button>
+              </p>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function App() {
   const [files, setFiles] = useState([]);
   const [uploadLoading, setUploadLoading] = useState(false);
@@ -788,6 +960,61 @@ function App() {
   const [metrics, setMetrics] = useState(null); // Health metrics for final result
   const [showTransforms, setShowTransforms] = useState({}); // Track expanded transforms by joinId
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { id: string, name: string }
+  const [user, setUser] = useState(null);
+  const [authStage, setAuthStage] = useState('login'); // login, signup, otp
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authData, setAuthData] = useState({ email: '', password: '', confirm_password: '', full_name: '', otp: '' });
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      const storedUser = JSON.parse(localStorage.getItem('user'));
+      setUser(storedUser);
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    }
+  }, []);
+
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setError(null);
+
+    try {
+      if (authStage === 'login') {
+        const resp = await axios.post(`${API_BASE}/auth/login`, {
+          email: authData.email,
+          password: authData.password
+        });
+        const { access_token, user: userData } = resp.data;
+        localStorage.setItem('token', access_token);
+        localStorage.setItem('user', JSON.stringify(userData));
+        axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+        setUser(userData);
+        setSuccess(`Welcome back, ${userData.name}!`);
+      } else if (authStage === 'signup') {
+        await axios.post(`${API_BASE}/auth/request-otp`, authData);
+        setAuthStage('otp');
+        setSuccess('OTP sent to your email!');
+      } else if (authStage === 'otp') {
+        await axios.post(`${API_BASE}/auth/verify-signup`, authData);
+        setAuthStage('login');
+        setSuccess('Account verified! Please login.');
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Authentication failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    delete axios.defaults.headers.common['Authorization'];
+    setUser(null);
+    setSuccess('Logged out successfully');
+  };
+
 
   useEffect(() => {
     const fetchFiles = async () => {
@@ -885,7 +1112,8 @@ function App() {
     try {
       await axios.post(`${API_BASE}/collections`, {
         name: collectionName,
-        config: config
+        config: config,
+        result_id: finalResultId || null
       });
       setSuccess(`Collection "${collectionName}" saved!`);
       setSaveModal(false);
@@ -1076,6 +1304,21 @@ function App() {
     return file ? file.columns : [];
   };
 
+  if (!user) {
+    return (
+      <AuthScreen
+        stage={authStage}
+        setStage={setAuthStage}
+        loading={authLoading}
+        authData={authData}
+        setAuthData={setAuthData}
+        onSubmit={handleAuthSubmit}
+        error={error}
+        success={success}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen relative">
       {/* Enhanced Background system is now handled purely via CSS body backgrounds for smoother transitions */}
@@ -1098,6 +1341,13 @@ function App() {
             </button>
             <button onClick={() => setSaveModal(true)} className="px-5 py-2 text-[14px] font-bold bg-blue-600 text-white rounded-full hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/20 active:scale-95">
               Save Collection
+            </button>
+            <button 
+              onClick={handleLogout} 
+              className="flex items-center gap-2 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-gray-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-full transition-all border border-transparent hover:border-rose-500/20"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Logout</span>
             </button>
           </div>
         </div>
@@ -1227,6 +1477,14 @@ function App() {
                         >
                           Load
                         </button>
+                        {col.has_result && (
+                          <button
+                            onClick={() => window.open(`${API_BASE}/collections/download/${col.name}`, '_blank')}
+                            className="px-5 py-2.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 transition-all active:scale-95 flex items-center gap-2"
+                          >
+                            <Download className="w-4 h-4" /> Result
+                          </button>
+                        )}
                         <button
                           onClick={async () => {
                             try {
