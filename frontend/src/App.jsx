@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, color } from 'framer-motion';
 import {
   Upload, Table, Download, Settings, FileText,
   AlertCircle, CheckCircle2, Plus, Trash2,
@@ -288,7 +288,7 @@ function ActionBar({ currentStage, setCurrentStage, files, executeChain, execute
   );
 }
 
-function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete, deleteConfirm, setDeleteConfirm }) {
+function SourcesView({ files, handleFileUpload, uploadLoading, uploadProgress, handleFileDelete, deleteConfirm, setDeleteConfirm, onClearAll }) {
   return (
     <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
@@ -314,15 +314,15 @@ function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete,
           {uploadLoading && (
             <div className="mt-8 space-y-2">
               <div className="flex justify-between text-[10px] font-black text-[#0F0842] uppercase tracking-widest">
-                <span>Uploading Datasets...</span>
-                <span>Wait a moment</span>
+                <span style={{ color: "#f3f3f7ff" }}>Uploading Datasets... {uploadProgress ? `${uploadProgress}%` : ''}</span>
+                <span style={{ color: "#f3f3f7ff" }}>Wait a moment</span>
               </div>
-              <div className="h-1.5 w-full bg-[#0F0842]/5 rounded-full overflow-hidden">
+              <div className="h-1.5 w-full bg-[#f3f3f7ff]/5 rounded-full overflow-hidden">
                 <motion.div
-                  initial={{ x: "-100%" }}
-                  animate={{ x: "100%" }}
-                  transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
-                  className="h-full w-1/2 bg-[#0F0842] shadow-[0_0_10px_rgba(15,8,66,0.3)]"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${uploadProgress || 10}%` }}
+                  transition={{ duration: 0.2 }}
+                  className="h-full bg-[#f3f3f7ff] shadow-[0_0_10px_rgba(15,8,66,0.3)] transition-all duration-300"
                 />
               </div>
             </div>
@@ -330,9 +330,20 @@ function SourcesView({ files, handleFileUpload, uploadLoading, handleFileDelete,
         </section>
 
         <section className="glass-card p-10 ring-1 ring-white/5 overflow-hidden">
-          <h2 className="text-3xl font-black flex items-center gap-4 mb-10 text-white">
-            <Database className="w-8 h-8 text-blue-400" /> Active Inventory
-          </h2>
+          <div className="flex items-center justify-between mb-10">
+            <h2 className="text-3xl font-black flex items-center gap-4 text-white">
+              <Database className="w-8 h-8 text-blue-400" /> Active Inventory
+            </h2>
+            {files.length > 0 && (
+              <button
+                type="button"
+                onClick={onClearAll}
+                className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-rose-500 hover:bg-rose-500/10 transition-all border border-rose-500/20"
+              >
+                Discard All
+              </button>
+            )}
+          </div>
           <div className="space-y-4 max-h-[500px] overflow-y-auto pr-4 custom-scrollbar">
             {files.length === 0 ? (
               <div className="py-20 text-center opacity-20 flex flex-col items-center gap-6 text-white">
@@ -939,6 +950,7 @@ function AuthScreen({ stage, setStage, loading, authData, setAuthData, onSubmit,
 function App() {
   const [files, setFiles] = useState([]);
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [executeLoading, setExecuteLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
@@ -964,6 +976,7 @@ function App() {
   const [authStage, setAuthStage] = useState('login'); // login, signup, otp
   const [authLoading, setAuthLoading] = useState(false);
   const [authData, setAuthData] = useState({ email: '', password: '', confirm_password: '', full_name: '', otp: '' });
+  const [clearConfirm, setClearConfirm] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -1063,6 +1076,7 @@ function App() {
     if (uploadedFiles.length === 0) return;
 
     setUploadLoading(true);
+    setUploadProgress(0);
     setError(null);
     setSuccess(null);
 
@@ -1070,13 +1084,21 @@ function App() {
     uploadedFiles.forEach(file => formData.append('files', file));
 
     try {
-      const resp = await axios.post(`${API_BASE}/upload`, formData);
+      const resp = await axios.post(`${API_BASE}/upload`, formData, {
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(percentCompleted);
+          }
+        }
+      });
       setFiles(prev => [...prev, ...resp.data.files]);
       setSuccess('Datasets imported successfully!');
     } catch (err) {
       setError(err.response?.data?.detail || 'Import failed');
     } finally {
       setUploadLoading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -1101,6 +1123,27 @@ function App() {
       if (j.fileB === fileId) return { ...j, fileB: '', keysB: [''] };
       return j;
     }));
+  };
+
+  const handleClearAllFiles = async () => {
+    try {
+      await axios.delete(`${API_BASE}/files/clear`);
+      setFiles([]);
+      setSuccess('All files discarded successfully');
+
+      // Reset pipeline
+      setJoins([{
+        id: crypto.randomUUID(),
+        fileA: '',
+        keysA: [''],
+        fileB: '',
+        keysB: [''],
+        type: 'inner',
+        transformations: { drop: [], rename: {}, cast: {} }
+      }]);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to clear files');
+    }
   };
 
   const saveCollection = async () => {
@@ -1342,8 +1385,8 @@ function App() {
             <button onClick={() => setSaveModal(true)} className="px-5 py-2 text-[14px] font-bold bg-blue-600 text-white rounded-full hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/20 active:scale-95">
               Save Collection
             </button>
-            <button 
-              onClick={handleLogout} 
+            <button
+              onClick={handleLogout}
               className="flex items-center gap-2 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-gray-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-full transition-all border border-transparent hover:border-rose-500/20"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -1408,7 +1451,18 @@ function App() {
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.3 }}
           >
-            {currentStage === 0 && <SourcesView files={files} handleFileUpload={handleFileUpload} uploadLoading={uploadLoading} handleFileDelete={handleFileDelete} deleteConfirm={deleteConfirm} setDeleteConfirm={setDeleteConfirm} />}
+            {currentStage === 0 && (
+              <SourcesView
+                files={files}
+                handleFileUpload={handleFileUpload}
+                uploadLoading={uploadLoading}
+                uploadProgress={uploadProgress}
+                handleFileDelete={handleFileDelete}
+                deleteConfirm={deleteConfirm}
+                setDeleteConfirm={setDeleteConfirm}
+                onClearAll={() => setClearConfirm(true)}
+              />
+            )}
             {currentStage === 1 && (
               <PipelineBuilder
                 joins={joins}
@@ -1531,6 +1585,53 @@ function App() {
                   <button onClick={() => setSaveModal(false)} className="py-4 font-bold text-gray-400 hover:bg-white/5 rounded-2xl transition-all border border-white/5">Cancel</button>
                   <button onClick={saveCollection} className="py-4 font-bold bg-blue-600 text-white rounded-2xl shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 transition-all">Save Config</button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Clear All Confirmation Modal */}
+      <AnimatePresence>
+        {clearConfirm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setClearConfirm(false)}
+              className="absolute inset-0 bg-[#0F0842]/20 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-md glass-card p-10 ring-1 ring-white/10 shadow-3xl overflow-hidden"
+            >
+              <div className="absolute top-0 left-0 w-full h-1 bg-rose-500/50" />
+              <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-8">
+                <Trash2 className="w-8 h-8 text-rose-500" />
+              </div>
+              <h3 className="text-2xl font-black text-white mb-3">Discard All Files?</h3>
+              <p className="text-sm text-gray-400 mb-10 font-medium leading-relaxed">
+                Are you sure you want to remove <span className="font-bold text-white">ALL uploaded datasets</span>? This action cannot be undone and will reset your pipeline configuration.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => setClearConfirm(false)}
+                  className="py-4 px-6 rounded-2xl font-bold text-gray-400 hover:bg-white/5 transition-all border border-white/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    handleClearAllFiles();
+                    setClearConfirm(false);
+                  }}
+                  className="py-4 px-6 rounded-2xl font-bold bg-rose-500 text-white hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20"
+                >
+                  Discard All
+                </button>
               </div>
             </motion.div>
           </div>
