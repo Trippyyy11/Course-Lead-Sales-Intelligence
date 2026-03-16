@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pandas
+openpyxl
+python-multipart
+thefuzz
+asyncpg
+bcrypt
+pyjwt
+aiosmtplib
+python-dotenv

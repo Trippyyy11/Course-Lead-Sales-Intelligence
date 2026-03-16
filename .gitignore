@@ -1,0 +1,23 @@
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Results-files
+backend/results/
+
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
+
+# Utility scripts archived
+backend/internal/debug_tools/
