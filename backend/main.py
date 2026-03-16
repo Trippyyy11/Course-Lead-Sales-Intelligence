@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
 import jwt
 import bcrypt
@@ -21,11 +21,18 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ─── Environment Configuration ────────────────────────────────────────
+from dotenv import load_dotenv
+
+# Load variables from .env file
+load_dotenv()
+
 # ─── Supabase PostgreSQL ────────────────────────────────────────────
-SUPABASE_DB_URL = (
-    "postgresql://postgres:kk8381059274"
-    "@db.bwxybtdvusdibktcxcww.supabase.co:5432/postgres"
-)
+SUPABASE_DB_URL = os.getenv("DATABASE_URL")
+
+if SUPABASE_DB_URL is None:
+    raise ValueError("DATABASE_URL environment variable is not set. Please ensure you have created a .env file.")
+
 pg_pool: Optional[asyncpg.Pool] = None
 
 # ─── Auth Configuration ─────────────────────────────────────────────
@@ -111,7 +118,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:8000", ""],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -183,7 +190,7 @@ async def request_otp(data: AuthSignupRequest, background_tasks: BackgroundTasks
             raise HTTPException(status_code=400, detail="Email is already registered")
 
         otp = str(random.randint(100000, 999999))
-        expires_at = datetime.utcnow() + timedelta(minutes=5)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
 
         await conn.execute(
             """
@@ -211,7 +218,7 @@ async def verify_signup(data: AuthVerifySignup):
             raise HTTPException(status_code=400, detail="No OTP requested for this email")
         if otp_record["otp"] != data.otp:
             raise HTTPException(status_code=400, detail="Invalid OTP")
-        if datetime.utcnow() > otp_record["expires_at"].replace(tzinfo=None):
+        if datetime.now(timezone.utc) > otp_record["expires_at"].replace(tzinfo=timezone.utc):
             raise HTTPException(status_code=400, detail="OTP has expired")
 
         hashed_pass = hash_password(data.password)
@@ -236,7 +243,7 @@ async def login(data: AuthLoginRequest):
     payload = {
         "sub": user["email"],
         "name": user["full_name"],
-        "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     }
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
