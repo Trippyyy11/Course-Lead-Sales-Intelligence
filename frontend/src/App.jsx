@@ -223,7 +223,7 @@ const STAGES = [
   { id: 2, name: 'Data Review', icon: Table }
 ];
 
-function GlobalProgress({ activeTask }) {
+function GlobalProgress({ activeTask, onCancel }) {
   if (!activeTask) return null;
   
   return (
@@ -231,28 +231,93 @@ function GlobalProgress({ activeTask }) {
       initial={{ opacity: 0, y: 50 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 50 }}
-      className="fixed bottom-32 left-1/2 -translate-x-1/2 z-[100] w-full max-w-2xl px-6"
+      className="fixed bottom-32 left-1/2 -translate-x-1/2 z-[200] w-full max-w-2xl px-6"
     >
-      <div className="bg-[#1a1c1e] p-8 rounded-[32px] border border-white/5 shadow-[0_32px_64px_rgba(0,0,0,0.6)] ring-1 ring-white/10 backdrop-blur-xl">
-        <div className="flex items-center justify-between mb-4 px-1">
-          <div className="flex items-center gap-3">
-             <span className="text-[11px] font-black text-white uppercase tracking-[0.3em]">
-               {activeTask.message || 'Processing'}... {activeTask.progress}%
+      <div className="bg-[#1a1c1e] p-8 rounded-[32px] border-2 border-white/10 shadow-[0_32px_64px_rgba(0,0,0,0.8)] ring-1 ring-white/10 backdrop-blur-2xl relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-1 bg-linear-to-r from-transparent via-blue-500/40 to-transparent" />
+        
+        <div className="flex items-center justify-between mb-6 px-1">
+          <div className="flex flex-col gap-1">
+             <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.4em]">
+               Current Operation
+             </span>
+             <span className="text-sm font-bold text-white">
+               {activeTask.message || 'Processing'}...
              </span>
           </div>
-          <span className="text-[11px] font-black text-gray-500 uppercase tracking-[0.3em]">
-            Wait a moment
-          </span>
+          <div className="flex flex-col items-end gap-1">
+            <span className="text-[10px] font-black text-gray-500 uppercase tracking-[0.4em]">
+              Progress
+            </span>
+            <span className="text-sm font-black text-white">{activeTask.progress}%</span>
+          </div>
         </div>
-        <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden ring-1 ring-white/5">
-          <motion.div 
-            initial={{ width: 0 }}
-            animate={{ width: `${activeTask.progress}%` }}
-            className="h-full bg-white shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-all duration-300"
-          />
+
+        <div className="flex items-center gap-6">
+          <div className="flex-1 h-3 bg-white/5 rounded-full overflow-hidden ring-1 ring-white/5 border border-white/5">
+            <motion.div 
+              initial={{ width: 0 }}
+              animate={{ width: `${activeTask.progress}%` }}
+              className="h-full bg-linear-to-r from-blue-600 to-indigo-500 shadow-[0_0_20px_rgba(37,99,235,0.4)] transition-all duration-300"
+            />
+          </div>
+          
+          <button 
+            onClick={() => onCancel(activeTask.id)}
+            className="flex items-center gap-2 px-6 py-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500 text-[10px] font-black uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all active:scale-95 shrink-0"
+          >
+            <X className="w-3.5 h-3.5" /> Cancel
+          </button>
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function DownloadModal({ isOpen, onClose, onConfirm, filename, setFilename }) {
+  if (!isOpen) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[210] flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-[#0F0842]/40 backdrop-blur-md" />
+      <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-md glass-card p-10 ring-1 ring-white/10 shadow-3xl">
+        <div className="flex items-center justify-between mb-8">
+          <h3 className="text-2xl font-black text-white tracking-tight">Export Result</h3>
+          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl transition-all text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 ml-1">File Name</label>
+            <div className="relative group">
+              <FileText className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 group-focus-within:text-blue-500 transition-colors" />
+              <input
+                autoFocus
+                type="text"
+                value={filename}
+                onChange={(e) => setFilename(e.target.value)}
+                placeholder="Enter filename (optional)"
+                className="w-full pl-12 pr-4 py-4 bg-white/5 border border-white/10 rounded-2xl outline-none focus:border-blue-500/50 focus:ring-4 focus:ring-blue-500/10 transition-all text-sm text-white placeholder:text-gray-600 font-bold"
+                onKeyDown={(e) => e.key === 'Enter' && onConfirm()}
+              />
+            </div>
+            <p className="text-[10px] text-gray-500 font-medium px-2">The file will be exported as a compressed .ZIP for maximum efficiency.</p>
+          </div>
+
+          <div className="flex items-center gap-3 pt-4">
+            <button onClick={onClose} className="flex-1 py-4 text-[11px] font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/5 rounded-2xl transition-all">
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-widest hover:bg-blue-500 transition-all shadow-xl shadow-blue-500/20 active:scale-[0.98] flex items-center justify-center gap-2"
+            >
+              <Download className="w-3.5 h-3.5" /> Start Download
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
   );
 }
 
@@ -717,8 +782,8 @@ function PipelineBuilder({
 function ReviewView({ previewData, metrics, saveProject }) {
   return (
     <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-white">
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-10">
-        <div className="xl:col-span-3 space-y-10 pb-32">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 items-start">
+        <div className="lg:col-span-2 space-y-10">
           <section className="glass-card overflow-hidden ring-1 ring-white/5">
             <div className="p-10 border-b border-white/5 flex items-center justify-between bg-white/5">
               <div>
@@ -768,14 +833,9 @@ function ReviewView({ previewData, metrics, saveProject }) {
                   { label: "Missing Values", value: metrics.null_count, color: "text-amber-400", bg: "bg-amber-500/10", icon: AlertCircle },
                   { label: "Duplicates", value: metrics.duplicate_count, color: "text-rose-400", bg: "bg-rose-500/10", icon: Trash2 },
                 ].map((m, i) => (
-                  <div key={i} className="p-6 glass-subcard !rounded-[24px] flex items-center justify-between">
-                    <div>
-                      <p className="text-[10px] font-black uppercase text-gray-500 tracking-widest mb-2">{m.label}</p>
-                      <span className={`text-3xl font-black ${m.color}`}>{m.value}</span>
-                    </div>
-                    <div className={`p-4 ${m.bg} ${m.color} rounded-2xl`}>
-                      <m.icon className="w-6 h-6" />
-                    </div>
+                  <div key={i} className="p-8 glass-subcard !rounded-[32px]">
+                    <p className="text-[10px] font-black uppercase text-gray-500 tracking-widest mb-3">{m.label}</p>
+                    <span className={cn("text-3xl sm:text-4xl font-black block break-all leading-none", m.color)}>{m.value}</span>
                   </div>
                 ))}
               </div>
@@ -784,9 +844,6 @@ function ReviewView({ previewData, metrics, saveProject }) {
             )}
           </div>
 
-          <button type="button" onClick={saveProject} className="w-full py-5 bg-white/5 border border-white/10 rounded-3xl flex items-center justify-center gap-4 text-[10px] font-black uppercase tracking-[0.3em] text-gray-300 hover:bg-white/10 hover:text-white transition-all shadow-xl">
-            <Download className="w-4 h-4" /> Export Config
-          </button>
         </aside>
       </div>
     </div>
@@ -996,6 +1053,14 @@ function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authData, setAuthData] = useState({ email: '', password: '', confirm_password: '', full_name: '', otp: '' });
   const [clearConfirm, setClearConfirm] = useState(false);
+  const [downloadModal, setDownloadModal] = useState({ show: false, resultId: null });
+  const [downloadFilename, setDownloadFilename] = useState('');
+  const uploadController = useRef(null);
+  const activeTaskIdRef = useRef(null);
+
+  useEffect(() => {
+    activeTaskIdRef.current = activeTask?.id;
+  }, [activeTask]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -1096,35 +1161,73 @@ function App() {
 
     setUploadLoading(true);
     setUploadProgress(0);
-    setActiveTask({ id: 'upload', type: 'system', progress: 10, message: 'Uploading Datasets' });
+    const taskId = 'upload_' + Date.now();
+    setActiveTask({ id: taskId, type: 'system', progress: 10, message: 'Uploading Datasets' });
+    
+    // Setup abort controller for this upload
+    uploadController.current = new AbortController();
 
     try {
-      for (const file of uploadedFiles) {
-        const formData = new FormData();
-        formData.append('file', file);
-        
-        await axios.post(`${API_BASE}/upload`, formData, {
-          onUploadProgress: (progressEvent) => {
-            const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            setUploadProgress(progress);
-            setActiveTask({ id: 'upload', type: 'system', progress, message: 'Uploading Datasets' });
-          }
-        });
-      }
+      const formData = new FormData();
+      uploadedFiles.forEach(file => {
+        formData.append('files', file);
+      });
+      
+      await axios.post(`${API_BASE}/upload`, formData, {
+        signal: uploadController.current.signal,
+        onUploadProgress: (progressEvent) => {
+          const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setUploadProgress(progress);
+          setActiveTask({ id: taskId, type: 'system', progress, message: 'Uploading Datasets' });
+        }
+      });
       
       const resp = await axios.get(`${API_BASE}/files`);
       setFiles(resp.data.files);
       setSuccess(`${uploadedFiles.length} file(s) uploaded successfully`);
       
-      setActiveTask({ id: 'upload', type: 'system', progress: 100, message: 'Upload Complete' });
-      setTimeout(() => setActiveTask(null), 1000);
+      setActiveTask({ id: taskId, type: 'system', progress: 100, message: 'Upload Complete' });
+      setTimeout(() => {
+        setActiveTask(prev => prev?.id === taskId ? null : prev);
+      }, 1000);
 
     } catch (err) {
-      setError(err.response?.data?.detail || 'Upload failed');
+      if (axios.isCancel(err)) {
+        setSuccess('Upload cancelled');
+      } else {
+        setError(err.response?.data?.detail || 'Upload failed');
+      }
       setActiveTask(null);
     } finally {
       setUploadLoading(false);
       setUploadProgress(0);
+      uploadController.current = null;
+    }
+  };
+
+  const handleTaskCancel = async (taskId) => {
+    // If it's a pending state or upload, handle locally first
+    if (!taskId || taskId === 'pending') {
+      setActiveTask(null);
+      return;
+    }
+
+    if (taskId.startsWith('upload_')) {
+      if (uploadController.current) {
+        uploadController.current.abort();
+      }
+      setActiveTask(null);
+      return;
+    }
+
+    // Immediately stop UI feedback
+    setActiveTask(null);
+    setSuccess('Stopping operation...');
+
+    try {
+      await axios.delete(`${API_BASE}/tasks/${taskId}`);
+    } catch (err) {
+      console.error('Failed to cancel task on server:', err);
     }
   };
 
@@ -1178,8 +1281,22 @@ function App() {
     
     return new Promise((resolve, reject) => {
       const interval = setInterval(async () => {
+        // Stop if this task is no longer the active one according to the Ref
+        if (activeTaskIdRef.current !== taskId) {
+          clearInterval(interval);
+          resolve(null);
+          return;
+        }
+
         try {
           const { data } = await axios.get(`${API_BASE}/tasks/${taskId}`);
+          
+          if (activeTaskIdRef.current !== taskId) {
+            clearInterval(interval);
+            resolve(null);
+            return;
+          }
+
           if (data.status === 'completed') {
             setActiveTask({ id: taskId, type: type, progress: 100, message: `${messageBase} Complete` });
             clearInterval(interval);
@@ -1197,11 +1314,16 @@ function App() {
               resolve(data.result);
             }, 800);
 
-          } else if (data.status === 'failed') {
+          } else if (data.status === 'failed' || data.status === 'cancelled') {
             clearInterval(interval);
             setActiveTask(null);
-            setError(data.error || "Operation failed");
-            reject(new Error(data.error));
+            if (data.status === 'failed') {
+              setError(data.error || "Operation failed");
+              reject(new Error(data.error));
+            } else {
+              setSuccess("Operation cancelled");
+              resolve(null); // Return null to signal cancellation
+            }
           } else {
             setActiveTask({ id: taskId, type: type, progress: data.progress, message: data.message || messageBase });
           }
@@ -1360,11 +1482,23 @@ function App() {
         step.keysB.forEach(k => params.append('keys_b', k));
         params.append('join_type', step.type);
 
-        setActiveTask({ id: 'pending', type: 'join', progress: 5, message: `Preparing Step ${i + 1}...` });
+        // Don't set activeTask here with dummy ID, pollTask will handle it
         const resp = await axios.post(`${API_BASE}/join?${params.toString()}`, step.transformations);
         const taskId = resp.data.task_id;
+        
+        // Final check if user cancelled while we were waiting for the post request
+        if (!activeTask && i === 0) {
+           // If user clicked cancel during the post, we should stop
+           // But actually pollTask will handle it by checking the status
+        }
 
         const stepResult = await pollTask(taskId, 'join');
+        
+        // If stepResult is null, it means the task was cancelled
+        if (!stepResult) {
+          setExecuteLoading(false);
+          return;
+        }
 
         currentResultId = stepResult.result_id;
         lastCols = stepResult.columns;
@@ -1420,14 +1554,38 @@ function App() {
   const handleDownload = async () => {
     if (!finalResultId) return;
     setActiveTask({ id: 'export', type: 'system', progress: 10, message: 'Synthesizing Export' });
+    if (!finalResultId) {
+      setError("No result available to download.");
+      return;
+    }
+    setDownloadFilename(`pipeline_result_${Date.now()}`);
+    setDownloadModal({ show: true, resultId: finalResultId });
+  };
+
+  const triggerFinalDownload = async () => {
+    const { resultId } = downloadModal;
+    let name = downloadFilename.trim();
+    setDownloadModal({ show: false, resultId: null });
     
-    // Simulate prep time for UX
-    await new Promise(r => setTimeout(r, 800));
-    setActiveTask({ id: 'export', type: 'system', progress: 100, message: 'Compression Complete' });
+    if (!name) name = `result_${Date.now()}`;
+    // Strip common extensions if user tried to add them, we'll append .zip
+    const cleanName = name.replace(/\.(csv|zip|xls|xlsx|forge)$/i, '');
     
-    window.open(`${API_BASE}/download/${finalResultId}`, '_blank');
-    
-    setTimeout(() => setActiveTask(null), 1500);
+    try {
+      setSuccess("Preparing your file...");
+      await new Promise(r => setTimeout(r, 200));
+
+      const downloadUrl = `${API_BASE}/download/${resultId}?filename=${encodeURIComponent(cleanName)}`;
+      
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', `${cleanName}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      setError("Download failed. Please try again.");
+    }
   };
 
   const getFileColumns = (fileId) => {
@@ -1484,20 +1642,21 @@ function App() {
         </div>
       </header>
 
-      <GlobalProgress activeTask={activeTask} />
+      <GlobalProgress activeTask={activeTask} onCancel={handleTaskCancel} />
 
-      <div className="pt-32 pb-16 text-center space-y-4">
-        <h1 className="text-5xl md:text-7xl font-black tracking-tight leading-[1.1]">
-          Synergize your data with <br />
-          <span className="gemini-text">Next-gen AI Pipeline</span>
+      <div className="pt-32 pb-16 text-center space-y-6 relative">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-blue-600/20 blur-[140px] rounded-full -z-10" />
+        <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-[1.1] animate-in fade-in slide-in-from-bottom-8 duration-1000">
+          Course Lead <br />
+          <span className="gemini-text">Intelligence Pipeline</span>
         </h1>
-        <p className="text-gray-400 text-lg md:text-xl font-medium max-w-2xl mx-auto">
-          Experience the most capable data harmonization engine <br />
-          built for speed and precision.
+        <p className="text-gray-400 text-lg md:text-xl font-medium max-w-2xl mx-auto opacity-80">
+          Join, clean, and transform your sales lead datasets <br />
+          with precision and ease.
         </p>
       </div>
 
-      <main className="max-w-7xl mx-auto min-h-[60vh]">
+      <main className="max-w-7xl mx-auto min-h-[60vh] px-6">
         {/* Toast Notifications */}
         <div className="toast-container">
           <AnimatePresence>
@@ -1706,6 +1865,14 @@ function App() {
           </div>
         )}
       </AnimatePresence>
+
+      <DownloadModal
+        isOpen={downloadModal.show}
+        onClose={() => setDownloadModal({ show: false, resultId: null })}
+        filename={downloadFilename}
+        setFilename={setDownloadFilename}
+        onConfirm={triggerFinalDownload}
+      />
 
       {/* Clear All Confirmation Modal */}
       <AnimatePresence>

@@ -363,11 +363,14 @@ async def clear_all_files():
 
 async def _perform_background_save(task_id: str, collection_name: str, config: dict, df: pd.DataFrame):
     try:
+        _check_task_cancelled(task_id)
         task_store[task_id] = {"status": "processing", "progress": 5, "message": "Initiating save sequence..."}
+        _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 15, "message": "Compressing and writing CSV data..."})
         result_filename = f"result_{uuid.uuid4().hex}.zip"
         file_path = os.path.join("results", result_filename)
         
+        _check_task_cancelled(task_id)
         # Offload ZIP-compressed CSV writing to a thread
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: df.to_csv(
@@ -376,6 +379,7 @@ async def _perform_background_save(task_id: str, collection_name: str, config: d
             compression={'method': 'zip', 'archive_name': 'data.csv'}
         ))
         
+        _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 70, "message": "Updating database..."})
         
         async with pg_pool.acquire() as conn:
@@ -392,9 +396,13 @@ async def _perform_background_save(task_id: str, collection_name: str, config: d
                 result_filename,
             )
         
+        _check_task_cancelled(task_id)
         task_store[task_id] = {"status": "completed", "progress": 100, "message": "Collection saved successfully!"}
         logger.info(f"Background: Collection '{collection_name}' persisted to database")
     except Exception as e:
+        if task_store.get(task_id, {}).get("status") == "cancelled":
+            logger.info(f"Background operation {task_id} successfully halted.")
+            return
         logger.error(f"Background Save Failed for {collection_name}: {e}")
         task_store[task_id] = {"status": "failed", "error": str(e)}
 
@@ -438,6 +446,19 @@ async def delete_collection(name: str):
         raise HTTPException(status_code=404, detail="Collection not found")
     return {"message": f"Collection '{name}' deleted successfully"}
 
+@app.delete("/tasks/{task_id}")
+async def cancel_task(task_id: str):
+    if task_id not in task_store:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    current_status = task_store[task_id].get("status")
+    if current_status in ["completed", "failed"]:
+        return {"message": f"Task already {current_status}"}
+    
+    task_store[task_id]["status"] = "cancelled"
+    task_store[task_id]["message"] = "Task cancelled by user"
+    return {"message": "Task cancellation requested"}
+
 @app.get("/collections/download/{name}")
 async def download_collection_result(name: str):
     async with pg_pool.acquire() as conn:
@@ -471,14 +492,22 @@ async def get_task_status(task_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
     return task_store[task_id]
 
+def _check_task_cancelled(task_id: str):
+    if task_store.get(task_id, {}).get("status") == "cancelled":
+        raise Exception("Task cancelled by user")
+
 # Non-async version so it runs in a thread pool and doesn't block the event loop
 def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_a: List[str], keys_b: List[str], join_type: str, transforms: Optional[JoinTransformations]):
     try:
+        _check_task_cancelled(task_id)
         task_store[task_id] = {"status": "processing", "progress": 5, "message": "Preparing work area..."}
+        _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 15, "message": "Accessing source datasets..."})
+        _check_task_cancelled(task_id)
         df_a = load_dataframe(file_a_id)
         df_b = load_dataframe(file_b_id)
         
+        _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 30, "message": "Performing join logic..."})
         
         df_a = df_a.copy()
@@ -496,6 +525,7 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
         else:
             merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how=join_type, suffixes=("_fileA", "_fileB"))
 
+        _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 60, "message": "Applying transformations..."})
         # ... (Transformation logic simplified here, reusing existing code logic)
         # Note: I will keep the actual transformation code from the existing function
@@ -518,6 +548,7 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
                 to_drop = [c for c in transforms.drop if c in merged_df.columns]
                 if to_drop: merged_df = merged_df.drop(columns=to_drop)
 
+        _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 80, "message": "Calculating metrics..."})
         
         if len(merged_df) > max(len(df_a), len(df_b)) * 2 and len(merged_df) > 1000:
@@ -544,6 +575,9 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
             }
         }
     except Exception as e:
+        if task_store.get(task_id, {}).get("status") == "cancelled":
+            logger.info(f"Background join {task_id} successfully halted.")
+            return
         logger.exception(f"Background Join Failed: {e}")
         task_store[task_id] = {"status": "failed", "error": str(e)}
 
@@ -584,28 +618,34 @@ async def get_preview(result_id: str):
     }
 
 @app.get("/download/{result_id}")
-async def download_result(result_id: str):
+async def download_result(result_id: str, filename: Optional[str] = Query(None)):
     try:
         df = load_dataframe(result_id)
     except Exception:
         raise HTTPException(status_code=404, detail="Result not found")
 
+    # Use custom filename if provided, otherwise default
+    base_name = filename if filename else f"joined_data_{result_id}"
+    # Remove any existing extensions user might have passed
+    base_name = base_name.split('.')[0]
+    display_name = f"{base_name}.zip"
+    
     # Generate a ZIP compressed CSV on the fly
     buf = io.BytesIO()
     df.to_csv(
         buf, 
         index=False, 
-        compression={'method': 'zip', 'archive_name': 'result.csv'}
+        compression={'method': 'zip', 'archive_name': 'data.csv'}
     )
     buf.seek(0)
 
     return StreamingResponse(
         buf,
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename=joined_data_{result_id}.csv.zip"},
+        headers={"Content-Disposition": f'attachment; filename="{display_name}.zip"'},
     )
 
 # ═══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
