@@ -140,8 +140,9 @@ task_store: Dict[str, dict] = {}
 @app.on_event("startup")
 async def startup():
     global pg_pool
-    # Create results directory for massive files
+    # Create storage directories
     os.makedirs("results", exist_ok=True)
+    os.makedirs("uploads", exist_ok=True)
     
     pg_pool = await asyncpg.create_pool(
         SUPABASE_DB_URL,
@@ -175,6 +176,16 @@ async def startup():
                 name TEXT UNIQUE NOT NULL,
                 config JSONB NOT NULL DEFAULT '{}',
                 result_csv TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                type TEXT NOT NULL, -- 'upload' or 'result'
+                columns JSONB DEFAULT '[]',
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
@@ -352,13 +363,18 @@ async def clear_all_files():
 
 async def _perform_background_save(task_id: str, collection_name: str, config: dict, df: pd.DataFrame):
     try:
-        task_store[task_id] = {"status": "processing", "progress": 20, "message": "Preparing CSV data..."}
-        result_filename = f"result_{uuid.uuid4().hex}.csv"
+        task_store[task_id] = {"status": "processing", "progress": 5, "message": "Initiating save sequence..."}
+        task_store[task_id].update({"progress": 15, "message": "Compressing and writing CSV data..."})
+        result_filename = f"result_{uuid.uuid4().hex}.zip"
         file_path = os.path.join("results", result_filename)
         
-        # Offload CSV writing to a thread so it doesn't block the event loop
+        # Offload ZIP-compressed CSV writing to a thread
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: df.to_csv(file_path, index=False))
+        await loop.run_in_executor(None, lambda: df.to_csv(
+            file_path, 
+            index=False, 
+            compression={'method': 'zip', 'archive_name': 'data.csv'}
+        ))
         
         task_store[task_id].update({"progress": 70, "message": "Updating database..."})
         
@@ -441,8 +457,8 @@ async def download_collection_result(name: str):
 
     return StreamingResponse(
         iter_file(),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{name}_result.csv"'},
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}_result.csv.zip"'},
     )
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -458,7 +474,8 @@ async def get_task_status(task_id: str):
 # Non-async version so it runs in a thread pool and doesn't block the event loop
 def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_a: List[str], keys_b: List[str], join_type: str, transforms: Optional[JoinTransformations]):
     try:
-        task_store[task_id] = {"status": "processing", "progress": 10, "message": "Loading data..."}
+        task_store[task_id] = {"status": "processing", "progress": 5, "message": "Preparing work area..."}
+        task_store[task_id].update({"progress": 15, "message": "Accessing source datasets..."})
         df_a = load_dataframe(file_a_id)
         df_b = load_dataframe(file_b_id)
         
@@ -548,58 +565,6 @@ async def join_data(
     )
     return {"task_id": task_id}
 
-        # ── Transformations ──────────────────────────────────────────
-        if transforms:
-            if transforms.cast:
-                for col, dtype in transforms.cast.items():
-                    if col in merged_df.columns:
-                        try:
-                            if "datetime" in dtype:
-                                merged_df[col] = pd.to_datetime(merged_df[col], errors="coerce")
-                            else:
-                                merged_df[col] = merged_df[col].astype(dtype)
-                        except Exception as cast_err:
-                            logger.warning(f"Cast {col}→{dtype}: {cast_err}")
-
-            if transforms.rename:
-                valid = {o: n for o, n in transforms.rename.items() if o in merged_df.columns}
-                if valid:
-                    merged_df = merged_df.rename(columns=valid)
-
-            if transforms.drop:
-                to_drop = []
-                for col in transforms.drop:
-                    if col in merged_df.columns:
-                        to_drop.append(col)
-                    for sfx in ("_fileA", "_fileB"):
-                        sc = f"{col}{sfx}"
-                        if sc in merged_df.columns:
-                            to_drop.append(sc)
-                if to_drop:
-                    merged_df = merged_df.drop(columns=list(set(to_drop)))
-
-        if len(merged_df) > max(len(df_a), len(df_b)) * 2 and len(merged_df) > 1000:
-            logger.warning(f"JOIN EXPLOSION: {len(merged_df)} rows generated from {len(df_a)} and {len(df_b)} inputs.")
-
-        metrics = {
-            "match_rate_a": round(len(merged_df) / len(df_a) * 100, 2) if len(df_a) > 0 else 0,
-            "match_rate_b": round(len(merged_df) / len(df_b) * 100, 2) if len(df_b) > 0 else 0,
-            "null_count": int(merged_df.isnull().sum().sum()),
-            "duplicate_count": int(merged_df.duplicated().sum()),
-        }
-
-        result_id = str(uuid.uuid4())
-        storage[result_id] = merged_df
-
-        return {
-            "result_id": result_id,
-            "row_count": len(merged_df),
-            "columns": merged_df.columns.tolist(),
-            "metrics": metrics,
-        }
-    except Exception as e:
-        logger.exception(f"Join failed with unexpected error: {e}")
-        raise HTTPException(status_code=500, detail=f"Join failed: {str(e)}")
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Preview / Download
@@ -625,13 +590,19 @@ async def download_result(result_id: str):
     except Exception:
         raise HTTPException(status_code=404, detail="Result not found")
 
-    stream = io.StringIO()
-    df.to_csv(stream, index=False)
+    # Generate a ZIP compressed CSV on the fly
+    buf = io.BytesIO()
+    df.to_csv(
+        buf, 
+        index=False, 
+        compression={'method': 'zip', 'archive_name': 'result.csv'}
+    )
+    buf.seek(0)
 
     return StreamingResponse(
-        iter([stream.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=joined_data_{result_id}.csv"},
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=joined_data_{result_id}.csv.zip"},
     )
 
 # ═══════════════════════════════════════════════════════════════════════

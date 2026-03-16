@@ -1211,7 +1211,7 @@ function App() {
           setError("Error tracking progress.");
           reject(err);
         }
-      }, 500);
+      }, 250);
     });
   };
 
@@ -1229,6 +1229,7 @@ function App() {
       });
       
       if (resp.data.task_id) {
+        setActiveTask({ id: resp.data.task_id, type: 'save', progress: 5, message: 'Initiating Collection Sync...' });
         pollTask(resp.data.task_id, 'save');
       } else {
         setSuccess(`Collection "${collectionName}" saved!`);
@@ -1359,6 +1360,7 @@ function App() {
         step.keysB.forEach(k => params.append('keys_b', k));
         params.append('join_type', step.type);
 
+        setActiveTask({ id: 'pending', type: 'join', progress: 5, message: `Preparing Step ${i + 1}...` });
         const resp = await axios.post(`${API_BASE}/join?${params.toString()}`, step.transformations);
         const taskId = resp.data.task_id;
 
@@ -1420,8 +1422,8 @@ function App() {
     setActiveTask({ id: 'export', type: 'system', progress: 10, message: 'Synthesizing Export' });
     
     // Simulate prep time for UX
-    await new Promise(r => setTimeout(r, 500));
-    setActiveTask({ id: 'export', type: 'system', progress: 100, message: 'Ready for download' });
+    await new Promise(r => setTimeout(r, 800));
+    setActiveTask({ id: 'export', type: 'system', progress: 100, message: 'Compression Complete' });
     
     window.open(`${API_BASE}/download/${finalResultId}`, '_blank');
     
@@ -1660,6 +1662,20 @@ function App() {
               <h3 className="text-2xl font-black text-white mb-6">Save Pipeline</h3>
               <p className="text-sm text-gray-500 mb-8 font-medium">Store current configuration as a collection.</p>
               <div className="space-y-6">
+                <div className="flex items-center gap-3 p-4 bg-white/5 rounded-2xl border border-white/10 mb-8">
+                  <div className={cn(
+                    "w-3 h-3 rounded-full animate-pulse",
+                    finalResultId ? "bg-emerald-500 shadow-[0_0_10_rgba(16,185,129,0.5)]" : "bg-amber-500 shadow-[0_0_10_rgba(245,158,11,0.5)]"
+                  )} />
+                  <div>
+                    <p className="text-xs font-bold text-white">
+                      {finalResultId ? "Includes Joined Result (ZIP)" : "Pipeline Configuration Only"}
+                    </p>
+                    <p className="text-[10px] text-gray-500 font-medium">
+                      {finalResultId ? "The current join output will be compressed and stored." : "Run the pipeline first to include the generated result file."}
+                    </p>
+                  </div>
+                </div>
                 <div className="space-y-3">
                   <label className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-500">Collection Name</label>
                   <input
