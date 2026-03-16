@@ -1583,8 +1583,10 @@ function App() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      setActiveTask(null);
     } catch (err) {
       setError("Download failed. Please try again.");
+      setActiveTask(null);
     }
   };
 
@@ -1868,7 +1870,10 @@ function App() {
 
       <DownloadModal
         isOpen={downloadModal.show}
-        onClose={() => setDownloadModal({ show: false, resultId: null })}
+        onClose={() => {
+          setDownloadModal({ show: false, resultId: null });
+          setActiveTask(null);
+        }}
         filename={downloadFilename}
         setFilename={setDownloadFilename}
         onConfirm={triggerFinalDownload}

@@ -628,7 +628,7 @@ async def download_result(result_id: str, filename: Optional[str] = Query(None))
     base_name = filename if filename else f"joined_data_{result_id}"
     # Remove any existing extensions user might have passed
     base_name = base_name.split('.')[0]
-    display_name = f"{base_name}.zip"
+    display_name = base_name
     
     # Generate a ZIP compressed CSV on the fly
     buf = io.BytesIO()
