@@ -456,7 +456,9 @@ function SourcesView({ files, handleFileUpload, uploadLoading, uploadProgress, h
                     </div>
                     <div>
                       <h4 className="text-base font-bold text-white mb-1">{f.name}</h4>
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em]">{f.columns.length} Columns</p>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em]">
+                        {f.rows?.toLocaleString() || 0} Rows | {f.cols || f.columns?.length || 0} Columns
+                      </p>
                     </div>
                   </div>
                   <button
@@ -841,9 +843,20 @@ function ReviewView({ previewData, metrics, saveProject }) {
             <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-500 mb-8 border-b border-white/5 pb-5">Quality Metrics</h3>
             {metrics ? (
               <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                   <div className="p-6 glass-subcard !rounded-2xl border border-blue-500/10">
+                      <p className="text-[10px] font-black uppercase text-blue-400 tracking-widest mb-1">Rows</p>
+                      <span className="text-xl font-black text-white">{metrics.row_count?.toLocaleString() || 0}</span>
+                   </div>
+                   <div className="p-6 glass-subcard !rounded-2xl border border-indigo-500/10">
+                      <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest mb-1">Cols</p>
+                      <span className="text-xl font-black text-white">{metrics.col_count || 0}</span>
+                   </div>
+                </div>
+
                 {[
-                  { label: "Missing Values", value: metrics.null_count, color: "text-amber-400", bg: "bg-amber-500/10", icon: AlertCircle },
-                  { label: "Duplicates", value: metrics.duplicate_count, color: "text-rose-400", bg: "bg-rose-500/10", icon: Trash2 },
+                  { label: "Missing Values", value: metrics.null_count, color: "text-amber-400", icon: AlertCircle },
+                  { label: "Duplicates", value: metrics.duplicate_count, color: "text-rose-400", icon: Trash2 },
                 ].map((m, i) => (
                   <div key={i} className="p-8 glass-subcard !rounded-[32px]">
                     <p className="text-[10px] font-black uppercase text-gray-500 tracking-widest mb-3">{m.label}</p>
@@ -1515,7 +1528,11 @@ function App() {
         currentResultId = stepResult.result_id;
         lastCols = stepResult.columns;
         if (i === joins.length - 1) {
-          setMetrics(stepResult.metrics);
+          setMetrics({ 
+            ...stepResult.metrics, 
+            row_count: stepResult.row_count, 
+            col_count: stepResult.col_count 
+          });
         }
       }
 

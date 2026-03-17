@@ -315,10 +315,13 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
             # Store in memory
             storage[file_id] = df
+            logger.info(f"Processed {file.filename}: {len(df)} rows, {len(df.columns)} columns")
             info = {
                 "id": file_id,
                 "name": file.filename,
                 "columns": df.columns.tolist(),
+                "rows": len(df),
+                "cols": len(df.columns)
             }
             file_store[file_id] = info
             uploaded_info.append(info)
@@ -573,6 +576,7 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
             "result": {
                 "result_id": result_id,
                 "row_count": len(merged_df),
+                "col_count": len(merged_df.columns),
                 "columns": merged_df.columns.tolist(),
                 "metrics": metrics,
             }
