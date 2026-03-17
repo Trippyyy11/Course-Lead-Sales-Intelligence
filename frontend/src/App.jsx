@@ -1677,7 +1677,7 @@ function App() {
 
       <div className="pt-32 pb-16 text-center space-y-6 relative">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-blue-600/20 blur-[140px] rounded-full -z-10" />
-        <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-[1.1] animate-in fade-in slide-in-from-bottom-8 duration-1000">
+        <h1 className="text-3xl md:text-4xl font-black tracking-tight leading-[1.1] animate-in fade-in slide-in-from-bottom-8 duration-1000">
           Course Lead <br />
           <span className="gemini-text">Intelligence Pipeline</span>
         </h1>
