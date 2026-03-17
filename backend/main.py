@@ -411,7 +411,11 @@ async def upload_files(files: List[UploadFile] = File(...)):
             logger.info(f"Received file: {file.filename}, size: {len(content)} bytes")
 
             if file.filename.endswith(".csv"):
-                df = pd.read_csv(io.BytesIO(content), low_memory=False)
+                try:
+                    df = pd.read_csv(io.BytesIO(content), low_memory=False)
+                except UnicodeDecodeError:
+                    logger.info(f"UTF-8 decode failed for {file.filename}, falling back to latin-1")
+                    df = pd.read_csv(io.BytesIO(content), low_memory=False, encoding='latin-1')
             elif file.filename.endswith((".xls", ".xlsx")):
                 df = pd.read_excel(io.BytesIO(content))
             else:
@@ -444,6 +448,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
         except HTTPException:
             raise
         except Exception as e:
+            logger.exception(f"Error processing {file.filename}")
             raise HTTPException(
                 status_code=400,
                 detail=f"Error processing {file.filename}: {str(e)}",
