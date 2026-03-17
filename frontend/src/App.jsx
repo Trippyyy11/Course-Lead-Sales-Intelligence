@@ -33,7 +33,7 @@ function JoinDiagram({ type }) {
           cx="60" cy="50" r="35"
           className={cn(
             baseCircle,
-            (type === 'left' || type === 'outer' || type === 'left_anti') ? activeCircle : (type === 'inner' ? "fill-none stroke-white/10" : dimCircle)
+            (type === 'left' || type === 'outer' || type === 'left_anti' || type === 'full_anti') ? activeCircle : (type === 'inner' ? "fill-none stroke-white/10" : dimCircle)
           )}
         />
         {/* Circle B */}
@@ -41,38 +41,48 @@ function JoinDiagram({ type }) {
           cx="100" cy="50" r="35"
           className={cn(
             baseCircle,
-            (type === 'right' || type === 'outer' || type === 'right_anti') ? activeCircle : (type === 'inner' ? "fill-none stroke-white/10" : dimCircle)
+            (type === 'right' || type === 'outer' || type === 'right_anti' || type === 'full_anti') ? activeCircle : (type === 'inner' ? "fill-none stroke-white/10" : dimCircle)
           )}
         />
 
         <defs>
           <clipPath id="clipA"><circle cx="60" cy="50" r="35" /></clipPath>
           <clipPath id="clipB"><circle cx="100" cy="50" r="35" /></clipPath>
-          <clipPath id="clipAOnly">
-            <rect x="0" y="0" width="160" height="100" />
-            <circle cx="100" cy="50" r="35" className="fill-black" />
+          <clipPath id="clipIntersection">
+            <circle cx="60" cy="50" r="35" clipPath="url(#clipB)" />
           </clipPath>
-          <clipPath id="clipBOnly">
-            <rect x="0" y="0" width="160" height="100" />
-            <circle cx="60" cy="50" r="35" className="fill-black" />
-          </clipPath>
+          <mask id="maskAOnly">
+             <rect x="0" y="0" width="160" height="100" fill="white" />
+             <circle cx="100" cy="50" r="35" fill="black" />
+          </mask>
+          <mask id="maskBOnly">
+             <rect x="0" y="0" width="160" height="100" fill="white" />
+             <circle cx="60" cy="50" r="35" fill="black" />
+          </mask>
         </defs>
 
-        {/* Intersection Highlight */}
+        {/* Base Circles (Dimmed/Background) */}
+        <circle cx="60" cy="50" r="35" className={cn(baseCircle, type === 'inner' ? "fill-none" : dimCircle)} />
+        <circle cx="100" cy="50" r="35" className={cn(baseCircle, type === 'inner' ? "fill-none" : dimCircle)} />
+
+        {/* Highlights */}
+        {/* Left Side Highlight */}
+        {(type === 'left' || type === 'outer' || type === 'left_anti' || type === 'full_anti') && (
+          <circle cx="60" cy="50" r="35" className="fill-blue-500/80 stroke-none" mask={type === 'left_anti' || type === 'full_anti' ? "url(#maskAOnly)" : undefined} />
+        )}
+
+        {/* Right Side Highlight */}
+        {(type === 'right' || type === 'outer' || type === 'right_anti' || type === 'full_anti') && (
+          <circle cx="100" cy="50" r="35" className="fill-blue-500/80 stroke-none" mask={type === 'right_anti' || type === 'full_anti' ? "url(#maskBOnly)" : undefined} />
+        )}
+
+        {/* Intersection Highlight (For Non-Anti Joins) */}
         {(type === 'inner' || type === 'left' || type === 'right' || type === 'outer') && (
           <circle
             cx="60" cy="50" r="35"
             clipPath="url(#clipB)"
-            className="fill-blue-500/80 stroke-none transition-all duration-500"
+            className="fill-blue-700/90 stroke-none"
           />
-        )}
-
-        {/* Anti-Join Highlights */}
-        {type === 'left_anti' && (
-          <circle cx="60" cy="50" r="35" className="fill-blue-500/80 stroke-none transition-all duration-500" clipPath="url(#clipAOnly)" />
-        )}
-        {type === 'right_anti' && (
-          <circle cx="100" cy="50" r="35" className="fill-blue-500/80 stroke-none transition-all duration-500" clipPath="url(#clipBOnly)" />
         )}
 
         {/* Append Logic */}
@@ -598,6 +608,7 @@ function PipelineBuilder({
                           { value: 'left', label: 'Dataset A + matching items from B' },
                           { value: 'right', label: 'Dataset B + matching items from A' },
                           { value: 'outer', label: 'Everything from both datasets' },
+                          { value: 'full_anti', label: 'Everything excluding matches' },
                           { value: 'left_anti', label: 'Only in Dataset A (Unique)' },
                           { value: 'right_anti', label: 'Only in Dataset B (Unique)' },
                           { value: 'append', label: 'Stack rows from both datasets' }
@@ -610,7 +621,8 @@ function PipelineBuilder({
                           {join.type === 'inner' && "Keeps only rows where keys match in both datasets."}
                           {join.type === 'left' && "Keeps all rows from A, adding matches from B where they exist."}
                           {join.type === 'right' && "Keeps all rows from B, adding matches from A where they exist."}
-                          {join.type === 'outer' && "Combines everything. Fills gaps with empty values where matches aren't found."}
+                          {join.type === 'outer' && "Combines everything. Fills gaps with everything where matches aren't found."}
+                          {join.type === 'full_anti' && "Keeps only rows that exist in one dataset but NOT both (Symmetric Difference)."}
                           {join.type === 'left_anti' && "Finds rows in A that have NO match in B."}
                           {join.type === 'right_anti' && "Finds rows in B that have NO match in A."}
                           {join.type === 'append' && "Combines files by stacking rows. Requires sharing same column names."}

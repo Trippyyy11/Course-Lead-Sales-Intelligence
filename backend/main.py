@@ -522,6 +522,9 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
         elif join_type == "right_anti":
             merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how="right", indicator=True, suffixes=("_fileA", "_fileB"))
             merged_df = merged_df[merged_df["_merge"] == "right_only"].drop(columns=["_merge"])
+        elif join_type == "full_anti":
+            merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how="outer", indicator=True, suffixes=("_fileA", "_fileB"))
+            merged_df = merged_df[merged_df["_merge"] != "both"].drop(columns=["_merge"])
         else:
             merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how=join_type, suffixes=("_fileA", "_fileB"))
 
