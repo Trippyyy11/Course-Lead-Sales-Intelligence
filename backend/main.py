@@ -408,18 +408,21 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
         try:
             content = await file.read()
+            logger.info(f"Received file: {file.filename}, size: {len(content)} bytes")
 
             if file.filename.endswith(".csv"):
                 df = pd.read_csv(io.BytesIO(content), low_memory=False)
             elif file.filename.endswith((".xls", ".xlsx")):
                 df = pd.read_excel(io.BytesIO(content))
             else:
+                logger.warning(f"Unsupported file format: {file.filename}")
                 raise HTTPException(
                     status_code=400,
                     detail=f"Unsupported file format: {file.filename}",
                 )
 
             if df.empty:
+                logger.warning(f"File {file.filename} is empty")
                 raise HTTPException(
                     status_code=400,
                     detail=f"File {file.filename} is empty.",
@@ -627,6 +630,16 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
         
         df_a = df_a.copy()
         df_b = df_b.copy()
+
+        # Cast join keys to string to prevent type mismatch (e.g. str vs int64)
+        if keys_a:
+            for col in keys_a:
+                if col in df_a.columns:
+                    df_a[col] = df_a[col].astype(str)
+        if keys_b:
+            for col in keys_b:
+                if col in df_b.columns:
+                    df_b[col] = df_b[col].astype(str)
 
         if join_type == "append":
             common_columns = list(set(df_a.columns) & set(df_b.columns))
