@@ -6,7 +6,7 @@ import {
   Upload, Table, Download, Settings, FileText,
   AlertCircle, CheckCircle2, Plus, Trash2,
   ArrowRight, Layers, Sparkles, Database, X,
-  Shredder, User, Mail, Lock, ShieldCheck, LogOut
+  Shredder, User, Mail, Lock, ShieldCheck, LogOut, KeyRound
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -333,24 +333,35 @@ function DownloadModal({ isOpen, onClose, onConfirm, filename, setFilename }) {
 
 function Stepper({ currentStage, setCurrentStage, files }) {
   return (
-    <div className="flex items-center gap-1 p-1 bg-white/5 rounded-full backdrop-blur-md border border-white/5 ring-1 ring-white/5">
-      {STAGES.map((s, i) => (
-        <React.Fragment key={s.id}>
+    <div className="flex items-center gap-1 p-1 bg-white/[0.03] rounded-full border border-white/5">
+      {STAGES.map((s, i) => {
+        const isActive = currentStage === s.id;
+        const isDisabled = files.length < 2 && s.id > 0;
+        
+        return (
           <button
+            key={s.id}
             type="button"
-            onClick={() => files.length >= 2 || s.id === 0 ? setCurrentStage(s.id) : null}
-            disabled={files.length < 2 && s.id > 0}
+            onClick={() => !isDisabled || s.id === 0 ? setCurrentStage(s.id) : null}
+            disabled={isDisabled}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-full transition-all duration-300",
-              currentStage === s.id ? "bg-white text-black shadow-lg" : "text-gray-400 hover:text-white hover:bg-white/5",
-              files.length < 2 && s.id > 0 && "opacity-30 cursor-not-allowed"
+              "flex items-center gap-2.5 px-5 py-2.5 rounded-full transition-all duration-300 relative",
+              isActive 
+                ? "nav-pill-active-sleek" 
+                : "text-gray-500 hover:text-gray-300 hover:bg-white/5",
+              isDisabled && "opacity-20 cursor-not-allowed"
             )}
           >
-            <s.icon className={cn("w-3.5 h-3.5", currentStage === s.id ? "text-blue-600" : "")} />
-            <span className="text-[10px] font-bold uppercase tracking-wider hidden md:block">{s.name}</span>
+            <s.icon className={cn(
+              "w-4 h-4 transition-colors",
+              isActive ? "text-blue-400" : ""
+            )} />
+            <span className="text-[10px] font-bold uppercase tracking-widest hidden lg:block">
+              {s.name}
+            </span>
           </button>
-        </React.Fragment>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -912,7 +923,11 @@ function AuthScreen({ stage, setStage, loading, authData, setAuthData, onSubmit,
 
           <div className="flex flex-col items-center mb-10">
             <div className="w-16 h-16 bg-blue-600/10 rounded-2xl flex items-center justify-center mb-6 ring-1 ring-blue-500/20">
-              <ShieldCheck className="w-8 h-8 text-blue-500" />
+              {stage === 'otp' ? (
+                <KeyRound className="w-8 h-8 text-blue-500" />
+              ) : (
+                <ShieldCheck className="w-8 h-8 text-blue-500" />
+              )}
             </div>
             <h2 className="text-3xl font-black text-white tracking-tight">
               {stage === 'login' && 'Welcome Back'}
@@ -925,6 +940,26 @@ function AuthScreen({ stage, setStage, loading, authData, setAuthData, onSubmit,
               {stage === 'otp' && `Enter the code sent to ${authData.email}`}
             </p>
           </div>
+
+          <AnimatePresence mode="wait">
+            {stage === 'otp' && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                className="mb-10 flex flex-col items-center"
+              >
+                <div className="relative group">
+                  <div className="absolute inset-0 bg-blue-500/20 blur-3xl rounded-full group-hover:bg-blue-500/30 transition-all duration-700" />
+                  <img 
+                    src="/image-1.png" 
+                    alt="OTP Verification" 
+                    className="w-27 h-auto relative z-10 drop-shadow-[0_20px_50px_rgba(59,130,246,0.2)] group-hover:scale-105 transition-transform duration-700 ease-out"
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <form onSubmit={onSubmit} className="space-y-6">
             {stage === 'signup' && (
@@ -1080,6 +1115,8 @@ function App() {
   const [clearConfirm, setClearConfirm] = useState(false);
   const [downloadModal, setDownloadModal] = useState({ show: false, resultId: null });
   const [downloadFilename, setDownloadFilename] = useState('');
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
+  const [colDeleteConfirm, setColDeleteConfirm] = useState(null); // { name: string }
   const uploadController = useRef(null);
   const activeTaskIdRef = useRef(null);
 
@@ -1130,10 +1167,15 @@ function App() {
   };
 
   const handleLogout = () => {
+    setLogoutConfirm(true);
+  };
+
+  const confirmLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     delete axios.defaults.headers.common['Authorization'];
     setUser(null);
+    setLogoutConfirm(false);
     setSuccess('Logged out successfully');
   };
 
@@ -1257,6 +1299,13 @@ function App() {
   };
 
   const handleFileDelete = async (fileId) => {
+    const file = files.find(f => f.id === fileId);
+    if (file) {
+      setDeleteConfirm(file);
+    }
+  };
+
+  const confirmFileDelete = async (fileId) => {
     try {
       await axios.delete(`${API_BASE}/file/${fileId}`);
     } catch (err) {
@@ -1270,6 +1319,7 @@ function App() {
 
     setFiles(prev => prev.filter(f => f.id !== fileId));
     setSuccess('File removed successfully');
+    setDeleteConfirm(null);
 
     // Also clean up any join steps that might be using this file
     setJoins(prev => prev.map(j => {
@@ -1645,29 +1695,34 @@ function App() {
 
       <header className="pill-nav max-w-fit mx-auto">
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3 pl-2 pr-4 border-r border-white/10 group cursor-pointer">
-            <div className="w-9 h-9 bg-black rounded-full flex items-center justify-center ring-1 ring-white/20 group-hover:ring-blue-500/50 transition-all">
-
-              <Shredder className="w-6 h-6 text-blue-500 animate-pulse" />
+          <div className="flex items-center gap-4 pl-3 pr-6 border-r border-white/5 group cursor-pointer">
+            <div className="w-10 h-10 bg-black rounded-full flex items-center justify-center ring-1 ring-white/10 group-hover:ring-blue-500/20 transition-all duration-500">
+               <Shredder className="w-6 h-6 text-blue-500" />
             </div>
-            <span className="text-sm font-black tracking-tight text-white hidden sm:block">DataForge</span>
+            <span className="text-sm font-bold tracking-tight text-white hidden sm:block">DataForge</span>
           </div>
 
           <Stepper currentStage={currentStage} setCurrentStage={setCurrentStage} files={files} />
 
-          <div className="flex items-center gap-2 pr-1">
-            <button onClick={() => setShowCollections(true)} className="px-5 py-2 text-[11px] font-bold text-gray-300 hover:text-white transition-colors">
+          <div className="flex items-center gap-6 pr-3">
+            <button 
+              onClick={() => setShowCollections(true)} 
+              className="text-[10px] font-bold uppercase tracking-widest text-gray-500 hover:text-white transition-colors"
+            >
               Library
             </button>
-            <button onClick={() => setSaveModal(true)} className="px-5 py-2 text-[14px] font-bold bg-blue-600 text-white rounded-full hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/20 active:scale-95">
+            <button 
+              onClick={() => setSaveModal(true)} 
+              className="btn-sleek-primary px-7 py-2.5 rounded-full text-[10px] uppercase font-bold whitespace-nowrap"
+            >
               Save Collection
             </button>
             <button
               onClick={handleLogout}
-              className="flex items-center gap-2 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-gray-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-full transition-all border border-transparent hover:border-rose-500/20"
+              className="p-2 text-gray-600 hover:text-rose-500 hover:bg-rose-500/5 rounded-full transition-all"
+              title="Logout"
             >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Logout</span>
+              <LogOut className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -1806,12 +1861,6 @@ function App() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => loadCollection(col)}
-                          className="px-5 py-2.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-500 transition-all active:scale-95"
-                        >
-                          Load
-                        </button>
                         {col.has_result && (
                           <button
                             onClick={() => window.open(`${API_BASE}/collections/download/${col.name}`, '_blank')}
@@ -1821,14 +1870,7 @@ function App() {
                           </button>
                         )}
                         <button
-                          onClick={async () => {
-                            try {
-                              await axios.delete(`${API_BASE}/collections/${col.name}`);
-                              setCollections(prev => prev.filter(c => c.name !== col.name));
-                            } catch (err) {
-                              console.error("Delete failed:", err);
-                            }
-                          }}
+                          onClick={() => setColDeleteConfirm(col)}
                           className="p-3 text-gray-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
                         >
                           <Trash2 className="w-5 h-5" />
@@ -1948,6 +1990,139 @@ function App() {
                   className="py-4 px-6 rounded-2xl font-bold bg-rose-500 text-white hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20"
                 >
                   Discard All
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {logoutConfirm && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setLogoutConfirm(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-sm glass-card p-10 ring-1 ring-white/10 shadow-3xl overflow-hidden"
+            >
+              <div className="absolute top-0 left-0 w-full h-1 bg-amber-500/50" />
+              <div className="w-16 h-16 bg-amber-500/10 rounded-2xl flex items-center justify-center mb-8">
+                <LogOut className="w-8 h-8 text-amber-500" />
+              </div>
+              <h3 className="text-2xl font-black text-white mb-3">Sign Out?</h3>
+              <p className="text-sm text-gray-400 mb-10 font-medium leading-relaxed">
+                Are you sure you want to end your session? You will need to sign in again to access your data pipeline.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => setLogoutConfirm(false)}
+                  className="py-4 px-6 rounded-2xl font-bold text-gray-400 hover:bg-white/5 transition-all border border-white/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmLogout}
+                  className="py-4 px-6 rounded-2xl font-bold bg-white text-black hover:bg-gray-100 transition-all shadow-lg"
+                >
+                  Logout
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {colDeleteConfirm && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setColDeleteConfirm(null)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-md glass-card p-10 ring-1 ring-white/10 shadow-3xl overflow-hidden"
+            >
+              <div className="absolute top-0 left-0 w-full h-1 bg-rose-500/50" />
+              <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-8">
+                <Trash2 className="w-8 h-8 text-rose-500" />
+              </div>
+              <h3 className="text-2xl font-black text-white mb-3">Delete Collection?</h3>
+              <p className="text-sm text-gray-400 mb-10 font-medium leading-relaxed">
+                Are you sure you want to delete <span className="font-bold text-white">"{colDeleteConfirm.name}"</span>? This action is permanent and cannot be undone.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => setColDeleteConfirm(null)}
+                  className="py-4 px-6 rounded-2xl font-bold text-gray-400 hover:bg-white/5 transition-all border border-white/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await axios.delete(`${API_BASE}/collections/${colDeleteConfirm.name}`);
+                      setCollections(prev => prev.filter(c => c.name !== colDeleteConfirm.name));
+                      setSuccess(`Collection "${colDeleteConfirm.name}" deleted.`);
+                    } catch (err) {
+                      setError("Failed to delete collection.");
+                    } finally {
+                      setColDeleteConfirm(null);
+                    }
+                  }}
+                  className="py-4 px-6 rounded-2xl font-bold bg-rose-500 text-white hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20"
+                >
+                  Confirm Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {deleteConfirm && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDeleteConfirm(null)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-md glass-card p-10 ring-1 ring-white/10 shadow-3xl overflow-hidden"
+            >
+              <div className="absolute top-0 left-0 w-full h-1 bg-rose-500/50" />
+              <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-8">
+                <FileText className="w-8 h-8 text-rose-500" />
+              </div>
+              <h3 className="text-2xl font-black text-white mb-3">Remove Dataset?</h3>
+              <p className="text-sm text-gray-400 mb-10 font-medium leading-relaxed">
+                Are you sure you want to remove <span className="font-bold text-white">"{deleteConfirm.name}"</span>? This will reset any pipeline steps using this file.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => setDeleteConfirm(null)}
+                  className="py-4 px-6 rounded-2xl font-bold text-gray-400 hover:bg-white/5 transition-all border border-white/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => confirmFileDelete(deleteConfirm.id)}
+                  className="py-4 px-6 rounded-2xl font-bold bg-rose-500 text-white hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20"
+                >
+                  Confirm Remove
                 </button>
               </div>
             </motion.div>

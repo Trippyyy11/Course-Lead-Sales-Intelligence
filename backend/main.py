@@ -54,10 +54,17 @@ def verify_password(password: str, hashed_password: str) -> bool:
         return False
 
 # ─── SMTP Configuration ─────────────────────────────────────────────
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT") or "587")
 SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+
+if not SMTP_SERVER:
+    logger.warning("SMTP_SERVER not set in .env. Email features may fail.")
+
+# ─── Metrics Configuration ──────────────────────────────────────────
+JOIN_EXPLOSION_THRESHOLD = int(os.getenv("JOIN_EXPLOSION_THRESHOLD", "2000"))
+PREVIEW_LIMIT = int(os.getenv("PREVIEW_LIMIT", "50"))
 
 # ─── Pydantic Models ────────────────────────────────────────────────
 class AuthSignupRequest(BaseModel):
@@ -88,14 +95,119 @@ class JoinTransformations(BaseModel):
 
 # ─── Email Helper ────────────────────────────────────────────────────
 async def send_otp_email(to_email: str, otp: str):
+    logger.info(f"Generating OTP email for {to_email}")
     message = EmailMessage()
-    message.set_content(
-        f"Welcome to DataForge! Your verification code is: {otp}\n"
-        f"This code expires in 5 minutes."
-    )
     message["Subject"] = "DataForge - Your Activation Code"
     message["From"] = SMTP_USERNAME
     message["To"] = to_email
+
+    # Define a more robust and premium HTML template for email clients
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body {{
+                background-color: #020617;
+                color: #f8fafc;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                margin: 0;
+                padding: 0;
+            }}
+            .wrapper {{
+                background-color: #020617;
+                padding: 60px 20px;
+                text-align: center;
+            }}
+            .container {{
+                max-width: 480px;
+                margin: 0 auto;
+                background-color: #1e293b;
+                border: 1px solid #334155;
+                border-radius: 24px;
+                padding: 48px 32px;
+                text-align: center;
+            }}
+            .title {{
+                font-size: 28px;
+                font-weight: 800;
+                color: #ffffff;
+                margin: 0 0 12px 0;
+                letter-spacing: -0.02em;
+            }}
+            .subtitle {{
+                color: #94a3b8 !important;
+                font-size: 15px;
+                line-height: 1.6;
+                margin: 0 0 32px 0;
+            }}
+            .otp-box {{
+                background-color: #0f172a;
+                border: 2px solid #3b82f6;
+                border-radius: 16px;
+                padding: 24px;
+                margin: 0 auto 32px;
+                width: fit-content;
+                min-width: 200px;
+            }}
+            .otp-label {{
+                font-size: 10px;
+                font-weight: 900;
+                text-transform: uppercase;
+                letter-spacing: 0.2em;
+                color: #3b82f6;
+                margin-bottom: 8px;
+            }}
+            .otp-code {{
+                font-family: 'Monaco', 'Consolas', monospace;
+                font-size: 42px;
+                font-weight: 900;
+                letter-spacing: 0.3em;
+                color: #ffffff;
+                margin: 0;
+            }}
+            .expiry {{
+                color: #64748b;
+                font-size: 13px;
+                font-weight: 500;
+                margin: 0;
+            }}
+            .footer {{
+                color: #475569;
+                font-size: 11px;
+                margin-top: 48px;
+                padding-top: 24px;
+                border-top: 1px solid #334155;
+                line-height: 1.5;
+            }}
+        </style>
+    </head>
+    <body style="background-color: #020617; margin: 0; padding: 0;">
+        <div class="wrapper" style="background-color: #020617; padding: 60px 20px;">
+            <div class="container" style="background-color: #1e293b; border-radius: 24px; padding: 48px 32px; max-width: 480px; margin: 0 auto;">
+                <h1 class="title" style="color: #ffffff; font-size: 28px; font-weight: 800; margin: 0 0 12px 0;">Verify Your Email</h1>
+                <p class="subtitle" style="color: #94a3b8; font-size: 15px; margin: 0 0 32px 0;">Welcome to <strong>DataForge</strong>. Please use the following activation code to complete your registration.</p>
+                
+                <div class="otp-box" style="background-color: #0f172a; border: 2px solid #3b82f6; border-radius: 16px; padding: 24px; margin: 0 auto 32px;">
+                    <div class="otp-label" style="color: #3b82f6; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 8px;">Security Code</div>
+                    <div class="otp-code" style="color: #ffffff; font-size: 42px; font-weight: 900; letter-spacing: 0.3em;">{otp}</div>
+                </div>
+                
+                <p class="expiry" style="color: #64748b; font-size: 13px;">This code expires in <strong>5 minutes</strong>.</p>
+                
+                <div class="footer" style="color: #475569; font-size: 11px; margin-top: 48px; padding-top: 24px; border-top: 1px solid #334155;">
+                    <strong>ForgeJoin</strong> • Unified Pipeline Logic v3.1<br>
+                    Next-Gen Synthesis Engine • All rights reserved.
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    message.set_content(f"Your DataForge verification code is: {otp}")
+    message.add_alternative(html_content, subtype="html")
 
     try:
         await aiosmtplib.send(
@@ -557,7 +669,7 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
         _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 80, "message": "Calculating metrics..."})
         
-        if len(merged_df) > max(len(df_a), len(df_b)) * 2 and len(merged_df) > 1000:
+        if len(merged_df) > JOIN_EXPLOSION_THRESHOLD:
             logger.warning(f"JOIN EXPLOSION: {len(merged_df)} rows generated.")
 
         metrics = {
@@ -618,7 +730,7 @@ async def get_preview(result_id: str):
     except Exception:
         raise HTTPException(status_code=404, detail="Result not found")
 
-    preview_df = df.head(50).fillna("")
+    preview_df = df.head(PREVIEW_LIMIT).fillna("")
     return {
         "data": preview_df.to_dict(orient="records"),
         "columns": preview_df.columns.tolist(),
