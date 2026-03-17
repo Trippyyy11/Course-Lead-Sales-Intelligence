@@ -636,15 +636,24 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
         df_a = df_a.copy()
         df_b = df_b.copy()
 
-        # Cast join keys to string to prevent type mismatch (e.g. str vs int64)
+        import re
+        def normalize_val(val):
+            val_str = str(val).strip()
+            # If it looks like a phone number (has digits and maybe a +)
+            digits = re.sub(r'\D', '', val_str)
+            if len(digits) >= 10:
+                return digits[-10:]
+            return digits
+
+        # Cast join keys to string and normalize to prevent type mismatch and format issues
         if keys_a:
             for col in keys_a:
                 if col in df_a.columns:
-                    df_a[col] = df_a[col].astype(str)
+                    df_a[col] = df_a[col].apply(normalize_val)
         if keys_b:
             for col in keys_b:
                 if col in df_b.columns:
-                    df_b[col] = df_b[col].astype(str)
+                    df_b[col] = df_b[col].apply(normalize_val)
 
         if join_type == "append":
             common_columns = list(set(df_a.columns) & set(df_b.columns))
