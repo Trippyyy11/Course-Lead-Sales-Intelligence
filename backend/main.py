@@ -3,7 +3,8 @@ import asyncio
 import uuid
 import json
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
@@ -37,9 +38,30 @@ if SUPABASE_DB_URL is None:
 pg_pool: Optional[asyncpg.Pool] = None
 
 # ─── Auth Configuration ─────────────────────────────────────────────
-SECRET_KEY = os.getenv("SECRET_KEY", "dataforge_super_secret_key")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable is not set. Please ensure you have it in your .env.")
+
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) # Default 24 hours
+
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
+RESULTS_DIR = os.getenv("RESULTS_DIR", "results")
+
+security = HTTPBearer()
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Invalid token: missing subject")
+        return {"email": email, "name": payload.get("name")}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 def hash_password(password: str) -> str:
     salt = bcrypt.gensalt()
@@ -121,12 +143,12 @@ async def send_otp_email(to_email: str, otp: str):
                 text-align: center;
             }}
             .container {{
-                max-width: 480px;
+                max-width: 440px;
                 margin: 0 auto;
                 background-color: #1e293b;
                 border: 1px solid #334155;
-                border-radius: 24px;
-                padding: 48px 32px;
+                border-radius: 20px;
+                padding: 32px 20px;
                 text-align: center;
             }}
             .title {{
@@ -145,11 +167,11 @@ async def send_otp_email(to_email: str, otp: str):
             .otp-box {{
                 background-color: #0f172a;
                 border: 2px solid #3b82f6;
-                border-radius: 16px;
-                padding: 24px;
-                margin: 0 auto 32px;
-                width: fit-content;
-                min-width: 200px;
+                border-radius: 12px;
+                padding: 20px 10px;
+                margin: 0 auto 24px;
+                max-width: 280px;
+                width: 100%;
             }}
             .otp-label {{
                 font-size: 10px;
@@ -160,10 +182,10 @@ async def send_otp_email(to_email: str, otp: str):
                 margin-bottom: 8px;
             }}
             .otp-code {{
-                font-family: 'Monaco', 'Consolas', monospace;
-                font-size: 42px;
-                font-weight: 900;
-                letter-spacing: 0.3em;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-size: 30px;
+                font-weight: 600;
+                letter-spacing: 0.12em;
                 color: #ffffff;
                 margin: 0;
             }}
@@ -189,9 +211,9 @@ async def send_otp_email(to_email: str, otp: str):
                 <h1 class="title" style="color: #ffffff; font-size: 28px; font-weight: 800; margin: 0 0 12px 0;">Verify Your Email</h1>
                 <p class="subtitle" style="color: #94a3b8; font-size: 15px; margin: 0 0 32px 0;">Welcome to <strong>DataForge</strong>. Please use the following activation code to complete your registration.</p>
                 
-                <div class="otp-box" style="background-color: #0f172a; border: 2px solid #3b82f6; border-radius: 16px; padding: 24px; margin: 0 auto 32px;">
-                    <div class="otp-label" style="color: #3b82f6; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 8px;">Security Code</div>
-                    <div class="otp-code" style="color: #ffffff; font-size: 42px; font-weight: 900; letter-spacing: 0.3em;">{otp}</div>
+                <div class="otp-box" style="background-color: #0f172a; border: 2px solid #3b82f6; border-radius: 12px; padding: 20px 10px; margin: 0 auto 24px; text-align: center; max-width: 280px;">
+                    <div class="otp-label" style="color: #3b82f6; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px;">Security Code</div>
+                    <div class="otp-code" style="color: #ffffff; font-size: 32px; font-weight: 800; letter-spacing: 0.1em; font-family: monospace;">{otp}</div>
                 </div>
                 
                 <p class="expiry" style="color: #64748b; font-size: 13px;">This code expires in <strong>5 minutes</strong>.</p>
@@ -229,8 +251,7 @@ async def send_otp_email(to_email: str, otp: str):
 app = FastAPI()
 
 # Configure CORS origins from environment
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,http://localhost:8000").split(",")
-
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -253,8 +274,8 @@ task_store: Dict[str, dict] = {}
 async def startup():
     global pg_pool
     # Create storage directories
-    os.makedirs("results", exist_ok=True)
-    os.makedirs("uploads", exist_ok=True)
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
     
     pg_pool = await asyncpg.create_pool(
         SUPABASE_DB_URL,
@@ -286,6 +307,7 @@ async def startup():
             CREATE TABLE IF NOT EXISTS collections (
                 id SERIAL PRIMARY KEY,
                 name TEXT UNIQUE NOT NULL,
+                owner_email TEXT NOT NULL,
                 config JSONB NOT NULL DEFAULT '{}',
                 result_csv TEXT,
                 created_at TIMESTAMPTZ DEFAULT NOW()
@@ -296,11 +318,18 @@ async def startup():
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 path TEXT NOT NULL,
+                owner_email TEXT NOT NULL,
                 type TEXT NOT NULL, -- 'upload' or 'result'
                 columns JSONB DEFAULT '[]',
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
+        # Migration: Add owner_email if columns exist but without owner_email
+        try:
+            await conn.execute("ALTER TABLE collections ADD COLUMN IF NOT EXISTS owner_email TEXT")
+            await conn.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS owner_email TEXT")
+        except:
+            pass
     logger.info("Database tables ready")
 
 @app.on_event("shutdown")
@@ -340,7 +369,7 @@ async def request_otp(data: AuthSignupRequest, background_tasks: BackgroundTasks
         )
 
     background_tasks.add_task(send_otp_email, data.email.lower(), otp)
-    print(f"--- DEV OTP FOR {data.email.lower()} IS: {otp} ---")
+    # print(f"--- DEV OTP FOR {data.email.lower()} IS: {otp} ---")
     return {"message": "OTP sent to your email"}
 
 @app.post("/auth/verify-signup")
@@ -395,39 +424,82 @@ async def login(data: AuthLoginRequest):
 # ═══════════════════════════════════════════════════════════════════════
 
 def load_dataframe(file_id: str) -> pd.DataFrame:
-    """Look up a DataFrame from the in-memory store."""
+    """Look up a DataFrame from the in-memory store or load from disk."""
     if file_id in storage:
         return storage[file_id]
-    raise ValueError(f"File {file_id} not found in memory")
+    
+    # Check database for file path
+    # Note: We need a sync way to do this or use a cache. 
+    # For now, we'll try to find it in the uploads folder if the ID matches a filename
+    for ext in [".csv", ".xlsx", ".xls"]:
+        path = os.path.join(UPLOAD_DIR, f"{file_id}{ext}")
+        if os.path.exists(path):
+            if ext == ".csv":
+                df = pd.read_csv(path, low_memory=False)
+            else:
+                df = pd.read_excel(path)
+            storage[file_id] = df
+            return df
+            
+    # Check results folder
+    for ext in [".zip"]:
+        path = os.path.join(RESULTS_DIR, f"{file_id}{ext}")
+        if os.path.exists(path):
+            # Results are zipped CSVs
+            df = pd.read_csv(path, compression='zip')
+            storage[file_id] = df
+            return df
+
+    raise ValueError(f"File {file_id} not found in memory or on disk")
 
 @app.post("/upload")
-async def upload_files(files: List[UploadFile] = File(...)):
+async def upload_files(files: List[UploadFile] = File(...), user: dict = Depends(get_current_user)):
     uploaded_info = []
     for file in files:
         file_id = str(uuid.uuid4())
+        extension = os.path.splitext(file.filename)[1].lower()
+        file_path = os.path.join(UPLOAD_DIR, f"{file_id}{extension}")
 
         try:
             content = await file.read()
+            
+            # Save to disk
+            with open(file_path, "wb") as f:
+                f.write(content)
 
-            if file.filename.endswith(".csv"):
+            # Load to memory for immediate use
+            if extension == ".csv":
                 df = pd.read_csv(io.BytesIO(content), low_memory=False)
-            elif file.filename.endswith((".xls", ".xlsx")):
+            elif extension in [".xls", ".xlsx"]:
                 df = pd.read_excel(io.BytesIO(content))
             else:
+                os.remove(file_path)
                 raise HTTPException(
                     status_code=400,
                     detail=f"Unsupported file format: {file.filename}",
                 )
 
             if df.empty:
+                os.remove(file_path)
                 raise HTTPException(
                     status_code=400,
                     detail=f"File {file.filename} is empty.",
                 )
 
-            # Store in memory
+            # Store in memory cache
             storage[file_id] = df
-            logger.info(f"Processed {file.filename}: {len(df)} rows, {len(df.columns)} columns")
+            
+            # Record in database
+            async with pg_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO files (id, name, path, owner_email, type, columns)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    """,
+                    file_id, file.filename, file_path, user["email"], "upload", json.dumps(df.columns.tolist())
+                )
+
+            logger.info(f"Processed and persisted {file.filename}: {len(df)} rows")
             info = {
                 "id": file_id,
                 "name": file.filename,
@@ -441,6 +513,8 @@ async def upload_files(files: List[UploadFile] = File(...)):
         except HTTPException:
             raise
         except Exception as e:
+            if os.path.exists(file_path):
+                os.remove(file_path)
             raise HTTPException(
                 status_code=400,
                 detail=f"Error processing {file.filename}: {str(e)}",
@@ -449,11 +523,25 @@ async def upload_files(files: List[UploadFile] = File(...)):
     return {"message": "Files uploaded successfully", "files": uploaded_info}
 
 @app.get("/files")
-async def get_files():
-    return {"files": list(file_store.values())}
+async def get_files(user: dict = Depends(get_current_user)):
+    # Refresh from database to ensure we have everything
+    async with pg_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, columns FROM files WHERE type = 'upload' AND owner_email = $1", 
+            user["email"]
+        )
+    
+    files = []
+    for r in rows:
+        files.append({
+            "id": r["id"],
+            "name": r["name"],
+            "columns": json.loads(r["columns"]) if isinstance(r["columns"], str) else r["columns"]
+        })
+    return {"files": files}
 
 @app.get("/columns/{file_id}")
-async def get_columns(file_id: str):
+async def get_columns(file_id: str, user: dict = Depends(get_current_user)):
     if file_id in file_store:
         return {"columns": file_store[file_id]["columns"]}
     if file_id in storage:
@@ -461,13 +549,34 @@ async def get_columns(file_id: str):
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.delete("/file/{file_id}")
-async def delete_file(file_id: str):
+async def delete_file(file_id: str, user: dict = Depends(get_current_user)):
+    async with pg_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT path FROM files WHERE id = $1 AND owner_email = $2", 
+            file_id, user["email"]
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="File not found or access denied")
+        
+        if os.path.exists(row["path"]):
+            os.remove(row["path"])
+        await conn.execute("DELETE FROM files WHERE id = $1", file_id)
+        
     storage.pop(file_id, None)
     file_store.pop(file_id, None)
     return {"message": "File deleted successfully"}
 
 @app.delete("/files/clear")
-async def clear_all_files():
+async def clear_all_files(user: dict = Depends(get_current_user)):
+    async with pg_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, path FROM files WHERE owner_email = $1", user["email"])
+        for r in rows:
+            if os.path.exists(r["path"]):
+                os.remove(r["path"])
+            storage.pop(r["id"], None)
+            file_store.pop(r["id"], None)
+        await conn.execute("DELETE FROM files WHERE owner_email = $1", user["email"])
+        
     storage.clear()
     file_store.clear()
     return {"message": "All files cleared successfully"}
@@ -476,17 +585,13 @@ async def clear_all_files():
 #  Collections  (persisted to Supabase)
 # ═══════════════════════════════════════════════════════════════════════
 
-async def _perform_background_save(task_id: str, collection_name: str, config: dict, df: pd.DataFrame):
+async def _perform_background_save(task_id: str, collection_name: str, config: dict, df: pd.DataFrame, owner_email: str):
     try:
         _check_task_cancelled(task_id)
-        task_store[task_id] = {"status": "processing", "progress": 5, "message": "Initiating save sequence..."}
-        _check_task_cancelled(task_id)
-        task_store[task_id].update({"progress": 15, "message": "Compressing and writing CSV data..."})
+        task_store[task_id] = {"status": "processing", "progress": 5, "message": "Initiating save sequence...", "owner_email": owner_email}
         result_filename = f"result_{uuid.uuid4().hex}.zip"
-        file_path = os.path.join("results", result_filename)
+        file_path = os.path.join(RESULTS_DIR, result_filename)
         
-        _check_task_cancelled(task_id)
-        # Offload ZIP-compressed CSV writing to a thread
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: df.to_csv(
             file_path, 
@@ -494,55 +599,46 @@ async def _perform_background_save(task_id: str, collection_name: str, config: d
             compression={'method': 'zip', 'archive_name': 'data.csv'}
         ))
         
-        _check_task_cancelled(task_id)
-        task_store[task_id].update({"progress": 70, "message": "Updating database..."})
-        
         async with pg_pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO collections (name, config, result_csv)
-                VALUES ($1, $2, $3)
+                INSERT INTO collections (name, owner_email, config, result_csv)
+                VALUES ($1, $2, $3, $4)
                 ON CONFLICT (name) DO UPDATE
                     SET config = EXCLUDED.config,
                         result_csv = EXCLUDED.result_csv
                 """,
-                collection_name,
-                json.dumps(config),
-                result_filename,
+                collection_name, owner_email, json.dumps(config), result_filename,
             )
         
-        _check_task_cancelled(task_id)
-        task_store[task_id] = {"status": "completed", "progress": 100, "message": "Collection saved successfully!"}
-        logger.info(f"Background: Collection '{collection_name}' persisted to database")
+        task_store[task_id].update({"status": "completed", "progress": 100, "message": "Collection saved successfully!"})
     except Exception as e:
-        if task_store.get(task_id, {}).get("status") == "cancelled":
-            logger.info(f"Background operation {task_id} successfully halted.")
-            return
         logger.error(f"Background Save Failed for {collection_name}: {e}")
-        task_store[task_id] = {"status": "failed", "error": str(e)}
+        task_store[task_id] = {"status": "failed", "error": str(e), "owner_email": owner_email}
 
 @app.post("/collections")
-async def save_collection(collection: CollectionSchema, background_tasks: BackgroundTasks):
+async def save_collection(collection: CollectionSchema, background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)):
     task_id = str(uuid.uuid4())
     if collection.result_id and collection.result_id in storage:
         df = storage[collection.result_id]
         task_store[task_id] = {"status": "queued", "progress": 0, "message": "Queuing save operation..."}
-        background_tasks.add_task(_perform_background_save, task_id, collection.name, collection.config, df)
+        background_tasks.add_task(_perform_background_save, task_id, collection.name, collection.config, df, user["email"])
         return {"task_id": task_id}
     
     # If no result id, just save metadata (fast)
     async with pg_pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO collections (name, config) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET config = EXCLUDED.config",
-            collection.name, json.dumps(collection.config)
+            "INSERT INTO collections (name, owner_email, config) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET config = EXCLUDED.config",
+            collection.name, user["email"], json.dumps(collection.config)
         )
     return {"message": "Metadata saved successfully"}
 
 @app.get("/collections")
-async def get_collections():
+async def get_collections(user: dict = Depends(get_current_user)):
     async with pg_pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT name, config, (result_csv IS NOT NULL) AS has_result FROM collections"
+            "SELECT name, config, (result_csv IS NOT NULL) AS has_result FROM collections WHERE owner_email = $1",
+            user["email"]
         )
     cols = []
     for r in rows:
@@ -554,15 +650,18 @@ async def get_collections():
     return {"collections": cols}
 
 @app.delete("/collections/{name}")
-async def delete_collection(name: str):
+async def delete_collection(name: str, user: dict = Depends(get_current_user)):
     async with pg_pool.acquire() as conn:
-        result = await conn.execute("DELETE FROM collections WHERE name = $1", name)
+        result = await conn.execute(
+            "DELETE FROM collections WHERE name = $1 AND owner_email = $2", 
+            name, user["email"]
+        )
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Collection not found")
     return {"message": f"Collection '{name}' deleted successfully"}
 
 @app.delete("/tasks/{task_id}")
-async def cancel_task(task_id: str):
+async def cancel_task(task_id: str, user: dict = Depends(get_current_user)):
     if task_id not in task_store:
         raise HTTPException(status_code=404, detail="Task not found")
     
@@ -575,10 +674,11 @@ async def cancel_task(task_id: str):
     return {"message": "Task cancellation requested"}
 
 @app.get("/collections/download/{name}")
-async def download_collection_result(name: str):
+async def download_collection_result(name: str, user: dict = Depends(get_current_user)):
     async with pg_pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT result_csv FROM collections WHERE name = $1", name
+            "SELECT result_csv FROM collections WHERE name = $1 AND owner_email = $2", 
+            name, user["email"]
         )
     if not row or not row["result_csv"]:
         raise HTTPException(status_code=404, detail="Result not found or not yet generated")
@@ -601,11 +701,16 @@ async def download_collection_result(name: str):
 #  Join Engine
 # ═══════════════════════════════════════════════════════════════════════
 
-@app.get("/tasks/{task_id}")
-async def get_task_status(task_id: str):
+async def get_task_status(task_id: str, user: dict = Depends(get_current_user)):
     if task_id not in task_store:
         raise HTTPException(status_code=404, detail="Task not found")
-    return task_store[task_id]
+    
+    # Verify task ownership
+    task_info = task_store[task_id]
+    if task_info.get("owner_email") != user["email"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+        
+    return task_info
 
 def _check_task_cancelled(task_id: str):
     if task_store.get(task_id, {}).get("status") == "cancelled":
@@ -685,6 +790,7 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
         task_store[task_id] = {
             "status": "completed",
             "progress": 100,
+            "owner_email": task_store[task_id].get("owner_email"),
             "result": {
                 "result_id": result_id,
                 "row_count": len(merged_df),
@@ -698,7 +804,7 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
             logger.info(f"Background join {task_id} successfully halted.")
             return
         logger.exception(f"Background Join Failed: {e}")
-        task_store[task_id] = {"status": "failed", "error": str(e)}
+        task_store[task_id] = {"status": "failed", "error": str(e), "owner_email": task_store[task_id].get("owner_email")}
 
 @app.post("/join")
 async def join_data(
@@ -709,9 +815,17 @@ async def join_data(
     keys_b: Optional[List[str]] = Query(None),
     join_type: str = Query("inner"),
     transforms: Optional[JoinTransformations] = None,
+    user: dict = Depends(get_current_user),
 ):
+    # Verify ownership before starting background task
+    async with pg_pool.acquire() as conn:
+        for fid in [file_a_id, file_b_id]:
+            row = await conn.fetchrow("SELECT id FROM files WHERE id = $1 AND owner_email = $2", fid, user["email"])
+            if not row:
+                raise HTTPException(status_code=403, detail=f"Access denied to file {fid}")
+
     task_id = str(uuid.uuid4())
-    task_store[task_id] = {"status": "queued", "progress": 0, "message": "Waiting for worker..."}
+    task_store[task_id] = {"status": "queued", "progress": 0, "message": "Waiting for worker...", "owner_email": user["email"]}
     background_tasks.add_task(
         _perform_background_join,
         task_id, file_a_id, file_b_id, keys_a, keys_b, join_type, transforms
@@ -724,7 +838,33 @@ async def join_data(
 # ═══════════════════════════════════════════════════════════════════════
 
 @app.get("/preview/{result_id}")
-async def get_preview(result_id: str):
+async def get_preview(result_id: str, user: dict = Depends(get_current_user)):
+    # Verify ownership of the result (if it's a join result, it should be in task_store or database)
+    # Join results in 'storage' are temporary. We should track who created them.
+    # For now, if it's in storage, check if any completed task for this user produced it.
+    
+    # Better: results should be looked up in database if they were saved as collections
+    # Temporary join results approach:
+    allowed = False
+    for tid, info in task_store.items():
+        if info.get("status") == "completed" and \
+           info.get("result", {}).get("result_id") == result_id and \
+           info.get("owner_email") == user["email"]:
+            allowed = True
+            break
+            
+    if not allowed:
+        # Check if it's a saved collection result
+        async with pg_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT name FROM collections WHERE result_csv LIKE $1 AND owner_email = $2",
+                f"%{result_id}%", user["email"]
+            )
+            if row: allowed = True
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Access denied to this result")
+
     try:
         df = load_dataframe(result_id)
     except Exception:
@@ -737,7 +877,27 @@ async def get_preview(result_id: str):
     }
 
 @app.get("/download/{result_id}")
-async def download_result(result_id: str, filename: Optional[str] = Query(None)):
+async def download_result(result_id: str, filename: Optional[str] = Query(None), user: dict = Depends(get_current_user)):
+    # Verify ownership similar to preview
+    allowed = False
+    for tid, info in task_store.items():
+        if info.get("status") == "completed" and \
+           info.get("result", {}).get("result_id") == result_id and \
+           info.get("owner_email") == user["email"]:
+            allowed = True
+            break
+            
+    if not allowed:
+        async with pg_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT name FROM collections WHERE result_csv LIKE $1 AND owner_email = $2",
+                f"%{result_id}%", user["email"]
+            )
+            if row: allowed = True
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     try:
         df = load_dataframe(result_id)
     except Exception:
@@ -767,4 +927,6 @@ async def download_result(result_id: str, filename: Optional[str] = Query(None))
 # ═══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    HOST = os.getenv("HOST", "127.0.0.1")
+    PORT = int(os.getenv("PORT", "8000"))
+    uvicorn.run(app, host=HOST, port=PORT)

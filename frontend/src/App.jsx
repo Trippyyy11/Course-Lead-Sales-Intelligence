@@ -16,7 +16,7 @@ function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE;
 
 /** Custom Select Component for Premium UI */
 /** Visual Representation of Join Types */
@@ -52,12 +52,12 @@ function JoinDiagram({ type }) {
             <circle cx="60" cy="50" r="35" clipPath="url(#clipB)" />
           </clipPath>
           <mask id="maskAOnly">
-             <rect x="0" y="0" width="160" height="100" fill="white" />
-             <circle cx="100" cy="50" r="35" fill="black" />
+            <rect x="0" y="0" width="160" height="100" fill="white" />
+            <circle cx="100" cy="50" r="35" fill="black" />
           </mask>
           <mask id="maskBOnly">
-             <rect x="0" y="0" width="160" height="100" fill="white" />
-             <circle cx="60" cy="50" r="35" fill="black" />
+            <rect x="0" y="0" width="160" height="100" fill="white" />
+            <circle cx="60" cy="50" r="35" fill="black" />
           </mask>
         </defs>
 
@@ -235,9 +235,9 @@ const STAGES = [
 
 function GlobalProgress({ activeTask, onCancel }) {
   if (!activeTask) return null;
-  
+
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: 50 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 50 }}
@@ -245,15 +245,15 @@ function GlobalProgress({ activeTask, onCancel }) {
     >
       <div className="bg-[#1a1c1e] p-8 rounded-[32px] border-2 border-white/10 shadow-[0_32px_64px_rgba(0,0,0,0.8)] ring-1 ring-white/10 backdrop-blur-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1 bg-linear-to-r from-transparent via-blue-500/40 to-transparent" />
-        
+
         <div className="flex items-center justify-between mb-6 px-1">
           <div className="flex flex-col gap-1">
-             <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.4em]">
-               Current Operation
-             </span>
-             <span className="text-sm font-bold text-white">
-               {activeTask.message || 'Processing'}...
-             </span>
+            <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.4em]">
+              Current Operation
+            </span>
+            <span className="text-sm font-bold text-white">
+              {activeTask.message || 'Processing'}...
+            </span>
           </div>
           <div className="flex flex-col items-end gap-1">
             <span className="text-[10px] font-black text-gray-500 uppercase tracking-[0.4em]">
@@ -265,14 +265,14 @@ function GlobalProgress({ activeTask, onCancel }) {
 
         <div className="flex items-center gap-6">
           <div className="flex-1 h-3 bg-white/5 rounded-full overflow-hidden ring-1 ring-white/5 border border-white/5">
-            <motion.div 
+            <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${activeTask.progress}%` }}
               className="h-full bg-linear-to-r from-blue-600 to-indigo-500 shadow-[0_0_20px_rgba(37,99,235,0.4)] transition-all duration-300"
             />
           </div>
-          
-          <button 
+
+          <button
             onClick={() => onCancel(activeTask.id)}
             className="flex items-center gap-2 px-6 py-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500 text-[10px] font-black uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all active:scale-95 shrink-0"
           >
@@ -294,7 +294,7 @@ function DownloadModal({ isOpen, onClose, onConfirm, filename, setFilename }) {
           <h3 className="text-2xl font-black text-white tracking-tight">Export Result</h3>
           <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl transition-all text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
-        
+
         <div className="space-y-6">
           <div className="space-y-3">
             <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 ml-1">File Name</label>
@@ -333,11 +333,11 @@ function DownloadModal({ isOpen, onClose, onConfirm, filename, setFilename }) {
 
 function Stepper({ currentStage, setCurrentStage, files }) {
   return (
-    <div className="flex items-center gap-1 p-1 bg-white/[0.03] rounded-full border border-white/5">
+    <div className="flex items-center gap-1 p-1 bg-white/[0.09] rounded-full border border-white/5">
       {STAGES.map((s, i) => {
         const isActive = currentStage === s.id;
         const isDisabled = files.length < 2 && s.id > 0;
-        
+
         return (
           <button
             key={s.id}
@@ -346,8 +346,8 @@ function Stepper({ currentStage, setCurrentStage, files }) {
             disabled={isDisabled}
             className={cn(
               "flex items-center gap-2.5 px-5 py-2.5 rounded-full transition-all duration-300 relative",
-              isActive 
-                ? "nav-pill-active-sleek" 
+              isActive
+                ? "nav-pill-active-sleek"
                 : "text-gray-500 hover:text-gray-300 hover:bg-white/5",
               isDisabled && "opacity-20 cursor-not-allowed"
             )}
@@ -855,14 +855,14 @@ function ReviewView({ previewData, metrics, saveProject }) {
             {metrics ? (
               <div className="space-y-6">
                 <div className="grid grid-cols-2 gap-4">
-                   <div className="p-6 glass-subcard !rounded-2xl border border-blue-500/10">
-                      <p className="text-[10px] font-black uppercase text-blue-400 tracking-widest mb-1">Rows</p>
-                      <span className="text-xl font-black text-white">{metrics.row_count?.toLocaleString() || 0}</span>
-                   </div>
-                   <div className="p-6 glass-subcard !rounded-2xl border border-indigo-500/10">
-                      <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest mb-1">Cols</p>
-                      <span className="text-xl font-black text-white">{metrics.col_count || 0}</span>
-                   </div>
+                  <div className="p-6 glass-subcard !rounded-2xl border border-blue-500/10">
+                    <p className="text-[10px] font-black uppercase text-blue-400 tracking-widest mb-1">Rows</p>
+                    <span className="text-xl font-black text-white">{metrics.row_count?.toLocaleString() || 0}</span>
+                  </div>
+                  <div className="p-6 glass-subcard !rounded-2xl border border-indigo-500/10">
+                    <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest mb-1">Cols</p>
+                    <span className="text-xl font-black text-white">{metrics.col_count || 0}</span>
+                  </div>
                 </div>
 
                 {[
@@ -951,9 +951,9 @@ function AuthScreen({ stage, setStage, loading, authData, setAuthData, onSubmit,
               >
                 <div className="relative group">
                   <div className="absolute inset-0 bg-blue-500/20 blur-3xl rounded-full group-hover:bg-blue-500/30 transition-all duration-700" />
-                  <img 
-                    src="/image-1.png" 
-                    alt="OTP Verification" 
+                  <img
+                    src="/image-1.png"
+                    alt="OTP Verification"
                     className="w-27 h-auto relative z-10 drop-shadow-[0_20px_50px_rgba(59,130,246,0.2)] group-hover:scale-105 transition-transform duration-700 ease-out"
                   />
                 </div>
@@ -1046,6 +1046,34 @@ function AuthScreen({ stage, setStage, loading, authData, setAuthData, onSubmit,
               </div>
             )}
 
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-start gap-4"
+              >
+                <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-rose-400 uppercase tracking-wider">Authentication Error</p>
+                  <p className="text-sm text-rose-200/80 leading-relaxed">{error}</p>
+                </div>
+              </motion.div>
+            )}
+
+            {success && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-start gap-4"
+              >
+                <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Success</p>
+                  <p className="text-sm text-emerald-200/80 leading-relaxed">{success}</p>
+                </div>
+              </motion.div>
+            )}
+
             <button
               disabled={loading}
               className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-bold text-sm shadow-xl shadow-blue-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50"
@@ -1131,6 +1159,26 @@ function App() {
       setUser(storedUser);
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     }
+
+    // Add interceptor to handle 401 errors
+    const interceptor = axios.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (error.response?.status === 401) {
+          // Silent logout on 401
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          delete axios.defaults.headers.common['Authorization'];
+          setUser(null);
+          setError("Session expired. Please sign in again.");
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    return () => {
+      axios.interceptors.response.eject(interceptor);
+    };
   }, []);
 
   const handleAuthSubmit = async (e) => {
@@ -1205,7 +1253,7 @@ function App() {
       const timer = setTimeout(() => {
         setError(null);
         setSuccess(null);
-      }, 1500);
+      }, 5000); // Increased to 5s for better readability
       return () => clearTimeout(timer);
     }
   }, [error, success]);
@@ -1230,7 +1278,7 @@ function App() {
     setUploadProgress(0);
     const taskId = 'upload_' + Date.now();
     setActiveTask({ id: taskId, type: 'system', progress: 10, message: 'Uploading Datasets' });
-    
+
     // Setup abort controller for this upload
     uploadController.current = new AbortController();
 
@@ -1239,7 +1287,7 @@ function App() {
       uploadedFiles.forEach(file => {
         formData.append('files', file);
       });
-      
+
       await axios.post(`${API_BASE}/upload`, formData, {
         signal: uploadController.current.signal,
         onUploadProgress: (progressEvent) => {
@@ -1248,11 +1296,11 @@ function App() {
           setActiveTask({ id: taskId, type: 'system', progress, message: 'Uploading Datasets' });
         }
       });
-      
+
       const resp = await axios.get(`${API_BASE}/files`);
       setFiles(resp.data.files);
       setSuccess(`${uploadedFiles.length} file(s) uploaded successfully`);
-      
+
       setActiveTask({ id: taskId, type: 'system', progress: 100, message: 'Upload Complete' });
       setTimeout(() => {
         setActiveTask(prev => prev?.id === taskId ? null : prev);
@@ -1353,7 +1401,7 @@ function App() {
   const pollTask = async (taskId, type) => {
     const messageBase = type === 'join' ? 'Synthesizing Step' : 'Saving Collection';
     setActiveTask({ id: taskId, type: type, progress: 0, message: messageBase });
-    
+
     return new Promise((resolve, reject) => {
       const interval = setInterval(async () => {
         // Stop if this task is no longer the active one according to the Ref
@@ -1365,7 +1413,7 @@ function App() {
 
         try {
           const { data } = await axios.get(`${API_BASE}/tasks/${taskId}`);
-          
+
           if (activeTaskIdRef.current !== taskId) {
             clearInterval(interval);
             resolve(null);
@@ -1375,7 +1423,7 @@ function App() {
           if (data.status === 'completed') {
             setActiveTask({ id: taskId, type: type, progress: 100, message: `${messageBase} Complete` });
             clearInterval(interval);
-            
+
             // Settle time
             setTimeout(async () => {
               setActiveTask(null);
@@ -1424,7 +1472,7 @@ function App() {
         config: config,
         result_id: finalResultId || null
       });
-      
+
       if (resp.data.task_id) {
         setActiveTask({ id: resp.data.task_id, type: 'save', progress: 5, message: 'Initiating Collection Sync...' });
         pollTask(resp.data.task_id, 'save');
@@ -1560,15 +1608,15 @@ function App() {
         // Don't set activeTask here with dummy ID, pollTask will handle it
         const resp = await axios.post(`${API_BASE}/join?${params.toString()}`, step.transformations);
         const taskId = resp.data.task_id;
-        
+
         // Final check if user cancelled while we were waiting for the post request
         if (!activeTask && i === 0) {
-           // If user clicked cancel during the post, we should stop
-           // But actually pollTask will handle it by checking the status
+          // If user clicked cancel during the post, we should stop
+          // But actually pollTask will handle it by checking the status
         }
 
         const stepResult = await pollTask(taskId, 'join');
-        
+
         // If stepResult is null, it means the task was cancelled
         if (!stepResult) {
           setExecuteLoading(false);
@@ -1578,10 +1626,10 @@ function App() {
         currentResultId = stepResult.result_id;
         lastCols = stepResult.columns;
         if (i === joins.length - 1) {
-          setMetrics({ 
-            ...stepResult.metrics, 
-            row_count: stepResult.row_count, 
-            col_count: stepResult.col_count 
+          setMetrics({
+            ...stepResult.metrics,
+            row_count: stepResult.row_count,
+            col_count: stepResult.col_count
           });
         }
       }
@@ -1592,7 +1640,7 @@ function App() {
       const previewResp = await axios.get(`${API_BASE}/preview/${currentResultId}`);
       setPreviewData(previewResp.data);
       setSuccess('Data pipeline executed successfully!');
-      
+
       setCurrentStage(2); // Move to Review stage
     } catch (err) {
       setError(err.response?.data?.detail || err.message || 'Execution failed');
@@ -1645,17 +1693,17 @@ function App() {
     const { resultId } = downloadModal;
     let name = downloadFilename.trim();
     setDownloadModal({ show: false, resultId: null });
-    
+
     if (!name) name = `result_${Date.now()}`;
     // Strip common extensions if user tried to add them, we'll append .zip
     const cleanName = name.replace(/\.(csv|zip|xls|xlsx|forge)$/i, '');
-    
+
     try {
       setSuccess("Preparing your file...");
       await new Promise(r => setTimeout(r, 200));
 
       const downloadUrl = `${API_BASE}/download/${resultId}?filename=${encodeURIComponent(cleanName)}`;
-      
+
       const link = document.createElement('a');
       link.href = downloadUrl;
       link.setAttribute('download', `${cleanName}.zip`);
@@ -1697,7 +1745,7 @@ function App() {
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-4 pl-3 pr-6 border-r border-white/5 group cursor-pointer">
             <div className="w-10 h-10 bg-black rounded-full flex items-center justify-center ring-1 ring-white/10 group-hover:ring-blue-500/20 transition-all duration-500">
-               <Shredder className="w-6 h-6 text-blue-500" />
+              <Shredder className="w-6 h-6 text-blue-500" />
             </div>
             <span className="text-sm font-bold tracking-tight text-white hidden sm:block">DataForge</span>
           </div>
@@ -1705,14 +1753,14 @@ function App() {
           <Stepper currentStage={currentStage} setCurrentStage={setCurrentStage} files={files} />
 
           <div className="flex items-center gap-6 pr-3">
-            <button 
-              onClick={() => setShowCollections(true)} 
+            <button
+              onClick={() => setShowCollections(true)}
               className="text-[10px] font-bold uppercase tracking-widest text-gray-500 hover:text-white transition-colors"
             >
               Library
             </button>
-            <button 
-              onClick={() => setSaveModal(true)} 
+            <button
+              onClick={() => setSaveModal(true)}
               className="btn-sleek-primary px-7 py-2.5 rounded-full text-[10px] uppercase font-bold whitespace-nowrap"
             >
               Save Collection

@@ -7,6 +7,7 @@
 
 # Results-files
 backend/results/
+backend/uploads/
 
 # Dependencies
 node_modules/
