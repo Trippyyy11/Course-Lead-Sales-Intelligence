@@ -3,12 +3,13 @@ import asyncio
 import uuid
 import json
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import os
+import platform
 from datetime import datetime, timedelta, timezone
 import random
 import jwt
@@ -66,6 +67,22 @@ if not SMTP_SERVER:
 JOIN_EXPLOSION_THRESHOLD = int(os.getenv("JOIN_EXPLOSION_THRESHOLD", "2000"))
 PREVIEW_LIMIT = int(os.getenv("PREVIEW_LIMIT", "50"))
 
+# ─── Storage Configuration (outside code directory) ─────────────────
+def _get_default_data_dir():
+    """Get OS-appropriate data directory for persistent storage."""
+    if platform.system() == "Windows":
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        return os.path.join(base, "DataForge")
+    else:
+        return os.path.join(os.path.expanduser("~"), ".dataforge")
+
+_DATA_DIR = _get_default_data_dir()
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(_DATA_DIR, "uploads"))
+RESULT_DIR = os.getenv("RESULT_DIR", os.path.join(_DATA_DIR, "results"))
+
+logger.info(f"Upload directory: {UPLOAD_DIR}")
+logger.info(f"Result directory: {RESULT_DIR}")
+
 # ─── Pydantic Models ────────────────────────────────────────────────
 class AuthSignupRequest(BaseModel):
     email: str
@@ -92,6 +109,28 @@ class JoinTransformations(BaseModel):
     drop: Optional[List[str]] = None
     rename: Optional[Dict[str, str]] = None
     cast: Optional[Dict[str, str]] = None
+
+# ─── JWT Helper ──────────────────────────────────────────────────────
+def get_current_user(authorization: Optional[str]) -> str:
+    """Extract and validate the user email from the Authorization header."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated. Please log in.")
+    token = authorization.replace("Bearer ", "")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token payload.")
+        return email
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
+
+# ─── Scoped Storage Keys ────────────────────────────────────────────
+def _scoped_key(owner: str, file_id: str) -> str:
+    """Create a user-scoped key for in-memory stores."""
+    return f"{owner}:{file_id}"
 
 # ─── Email Helper ────────────────────────────────────────────────────
 async def send_otp_email(to_email: str, otp: str):
@@ -239,10 +278,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── In-Memory Stores ───────────────────────────────────────────────
-# file_store: {file_id: {"id", "name", "columns"}}
+# ─── In-Memory Stores (user-scoped via "owner:file_id" keys) ────────
+# file_store: {"owner:file_id": {"id", "name", "columns", "owner"}}
 file_store: Dict[str, dict] = {}
-# storage: {file_id: DataFrame}   (also holds join result DataFrames)
+# storage: {"owner:file_id": DataFrame}   (also holds join result DataFrames)
 storage: Dict[str, pd.DataFrame] = {}
 
 # task_store: {task_id: {"status": str, "progress": int, "result": any, "error": str}}
@@ -252,9 +291,9 @@ task_store: Dict[str, dict] = {}
 @app.on_event("startup")
 async def startup():
     global pg_pool
-    # Create storage directories
-    os.makedirs("results", exist_ok=True)
-    os.makedirs("uploads", exist_ok=True)
+    # Create storage directories outside code directory
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    os.makedirs(RESULT_DIR, exist_ok=True)
     
     pg_pool = await asyncpg.create_pool(
         SUPABASE_DB_URL,
@@ -285,10 +324,12 @@ async def startup():
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS collections (
                 id SERIAL PRIMARY KEY,
-                name TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                owner_email TEXT NOT NULL DEFAULT '',
                 config JSONB NOT NULL DEFAULT '{}',
                 result_csv TEXT,
-                created_at TIMESTAMPTZ DEFAULT NOW()
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(name, owner_email)
             );
         """)
         await conn.execute("""
@@ -296,12 +337,111 @@ async def startup():
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 path TEXT NOT NULL,
-                type TEXT NOT NULL, -- 'upload' or 'result'
+                type TEXT NOT NULL,
+                owner_email TEXT NOT NULL DEFAULT '',
                 columns JSONB DEFAULT '[]',
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
+
+        # Migration: add owner_email column if it doesn't exist (for existing DBs)
+        try:
+            await conn.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS owner_email TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            await conn.execute("ALTER TABLE collections ADD COLUMN IF NOT EXISTS owner_email TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+
+        # Drop old unique constraint on collections.name if it exists, add new composite one
+        try:
+            await conn.execute("ALTER TABLE collections DROP CONSTRAINT IF EXISTS collections_name_key")
+        except Exception:
+            pass
+        try:
+            await conn.execute("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'collections_name_owner_key'
+                    ) THEN
+                        ALTER TABLE collections ADD CONSTRAINT collections_name_owner_key UNIQUE (name, owner_email);
+                    END IF;
+                END $$;
+            """)
+        except Exception:
+            pass
+
     logger.info("Database tables ready")
+    
+    # ─── Reload persisted files from disk into memory ────────────────
+    await _reload_persisted_files()
+
+async def _reload_persisted_files():
+    """Scan UPLOAD_DIR and reload each user's files into memory."""
+    if not os.path.exists(UPLOAD_DIR):
+        return
+    
+    loaded_count = 0
+    for owner_dir in os.listdir(UPLOAD_DIR):
+        owner_path = os.path.join(UPLOAD_DIR, owner_dir)
+        if not os.path.isdir(owner_path):
+            continue
+        
+        owner_email = owner_dir  # directory name is the owner email
+        
+        # Load metadata file if it exists
+        meta_path = os.path.join(owner_path, "_metadata.json")
+        metadata = {}
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r") as f:
+                    metadata = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load metadata for {owner_email}: {e}")
+                continue
+        
+        for file_id, file_meta in metadata.items():
+            file_path = os.path.join(owner_path, f"{file_id}.csv")
+            if not os.path.exists(file_path):
+                continue
+            
+            try:
+                df = pd.read_csv(file_path, low_memory=False)
+                skey = _scoped_key(owner_email, file_id)
+                storage[skey] = df
+                file_store[skey] = {
+                    "id": file_id,
+                    "name": file_meta.get("name", f"{file_id}.csv"),
+                    "columns": df.columns.tolist(),
+                    "rows": len(df),
+                    "cols": len(df.columns),
+                    "owner": owner_email,
+                }
+                loaded_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to reload file {file_id} for {owner_email}: {e}")
+    
+    if loaded_count > 0:
+        logger.info(f"Reloaded {loaded_count} persisted file(s) from disk")
+
+def _save_file_metadata(owner_email: str):
+    """Persist file metadata for a user to disk."""
+    owner_path = os.path.join(UPLOAD_DIR, owner_email)
+    os.makedirs(owner_path, exist_ok=True)
+    
+    meta_path = os.path.join(owner_path, "_metadata.json")
+    metadata = {}
+    
+    # Gather all files for this owner
+    for skey, info in file_store.items():
+        if info.get("owner") == owner_email:
+            metadata[info["id"]] = {
+                "name": info["name"],
+            }
+    
+    with open(meta_path, "w") as f:
+        json.dump(metadata, f, indent=2)
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -374,8 +514,12 @@ async def login(data: AuthLoginRequest):
             "SELECT email, full_name, hashed_password FROM users WHERE email = $1",
             data.email.lower(),
         )
-    if not user or not verify_password(data.password, user["hashed_password"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if not user:
+        raise HTTPException(status_code=401, detail="No account found with this email address.")
+    
+    if not verify_password(data.password, user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Incorrect password. Please try again.")
 
     payload = {
         "sub": user["email"],
@@ -391,24 +535,34 @@ async def login(data: AuthLoginRequest):
     }
 
 # ═══════════════════════════════════════════════════════════════════════
-#  File Upload / Management  (100 % in-memory — blazing fast)
+#  File Upload / Management  (user-scoped, persisted to disk)
 # ═══════════════════════════════════════════════════════════════════════
 
-def load_dataframe(file_id: str) -> pd.DataFrame:
-    """Look up a DataFrame from the in-memory store."""
-    if file_id in storage:
-        return storage[file_id]
-    raise ValueError(f"File {file_id} not found in memory")
+def load_dataframe(owner: str, file_id: str) -> pd.DataFrame:
+    """Look up a DataFrame from the user-scoped in-memory store."""
+    skey = _scoped_key(owner, file_id)
+    if skey in storage:
+        return storage[skey]
+    raise ValueError(f"File {file_id} not found")
 
 @app.post("/upload")
-async def upload_files(files: List[UploadFile] = File(...)):
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    authorization: Optional[str] = Header(None),
+):
+    owner = get_current_user(authorization)
     uploaded_info = []
+    
+    # Ensure user upload directory exists
+    user_upload_dir = os.path.join(UPLOAD_DIR, owner)
+    os.makedirs(user_upload_dir, exist_ok=True)
+    
     for file in files:
         file_id = str(uuid.uuid4())
 
         try:
             content = await file.read()
-            logger.info(f"Received file: {file.filename}, size: {len(content)} bytes")
+            logger.info(f"Received file: {file.filename}, size: {len(content)} bytes, owner: {owner}")
 
             if file.filename.endswith(".csv"):
                 try:
@@ -432,18 +586,34 @@ async def upload_files(files: List[UploadFile] = File(...)):
                     detail=f"File {file.filename} is empty.",
                 )
 
-            # Store in memory
-            storage[file_id] = df
+            # Store in user-scoped memory
+            skey = _scoped_key(owner, file_id)
+            storage[skey] = df
             logger.info(f"Processed {file.filename}: {len(df)} rows, {len(df.columns)} columns")
             info = {
                 "id": file_id,
                 "name": file.filename,
                 "columns": df.columns.tolist(),
                 "rows": len(df),
-                "cols": len(df.columns)
+                "cols": len(df.columns),
+                "owner": owner,
             }
-            file_store[file_id] = info
-            uploaded_info.append(info)
+            file_store[skey] = info
+            uploaded_info.append({k: v for k, v in info.items() if k != "owner"})
+
+            # Persist to disk for refresh recovery
+            persist_path = os.path.join(user_upload_dir, f"{file_id}.csv")
+            df.to_csv(persist_path, index=False)
+            
+            # Also persist to DB for record-keeping
+            async with pg_pool.acquire() as conn:
+                await conn.execute(
+                    """INSERT INTO files (id, name, path, type, owner_email, columns)
+                       VALUES ($1, $2, $3, $4, $5, $6)
+                       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, path=EXCLUDED.path""",
+                    file_id, file.filename, persist_path, "upload", owner,
+                    json.dumps(df.columns.tolist()),
+                )
 
         except HTTPException:
             raise
@@ -454,44 +624,88 @@ async def upload_files(files: List[UploadFile] = File(...)):
                 detail=f"Error processing {file.filename}: {str(e)}",
             )
 
+    # Save metadata to disk
+    _save_file_metadata(owner)
+
     return {"message": "Files uploaded successfully", "files": uploaded_info}
 
 @app.get("/files")
-async def get_files():
-    return {"files": list(file_store.values())}
+async def get_files(authorization: Optional[str] = Header(None)):
+    owner = get_current_user(authorization)
+    user_files = [
+        {k: v for k, v in info.items() if k != "owner"}
+        for info in file_store.values()
+        if info.get("owner") == owner
+    ]
+    return {"files": user_files}
 
 @app.get("/columns/{file_id}")
-async def get_columns(file_id: str):
-    if file_id in file_store:
-        return {"columns": file_store[file_id]["columns"]}
-    if file_id in storage:
-        return {"columns": storage[file_id].columns.tolist()}
+async def get_columns(file_id: str, authorization: Optional[str] = Header(None)):
+    owner = get_current_user(authorization)
+    skey = _scoped_key(owner, file_id)
+    if skey in file_store:
+        return {"columns": file_store[skey]["columns"]}
+    if skey in storage:
+        return {"columns": storage[skey].columns.tolist()}
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.delete("/file/{file_id}")
-async def delete_file(file_id: str):
-    storage.pop(file_id, None)
-    file_store.pop(file_id, None)
+async def delete_file(file_id: str, authorization: Optional[str] = Header(None)):
+    owner = get_current_user(authorization)
+    skey = _scoped_key(owner, file_id)
+    storage.pop(skey, None)
+    file_store.pop(skey, None)
+    
+    # Remove from disk
+    persist_path = os.path.join(UPLOAD_DIR, owner, f"{file_id}.csv")
+    if os.path.exists(persist_path):
+        os.remove(persist_path)
+    _save_file_metadata(owner)
+    
+    # Remove from DB
+    async with pg_pool.acquire() as conn:
+        await conn.execute("DELETE FROM files WHERE id = $1 AND owner_email = $2", file_id, owner)
+    
     return {"message": "File deleted successfully"}
 
 @app.delete("/files/clear")
-async def clear_all_files():
-    storage.clear()
-    file_store.clear()
+async def clear_all_files(authorization: Optional[str] = Header(None)):
+    owner = get_current_user(authorization)
+    
+    # Clear only this user's files from memory
+    keys_to_remove = [k for k, v in file_store.items() if v.get("owner") == owner]
+    for k in keys_to_remove:
+        storage.pop(k, None)
+        file_store.pop(k, None)
+    
+    # Clear from disk
+    user_upload_dir = os.path.join(UPLOAD_DIR, owner)
+    if os.path.exists(user_upload_dir):
+        import shutil
+        shutil.rmtree(user_upload_dir, ignore_errors=True)
+    
+    # Clear from DB
+    async with pg_pool.acquire() as conn:
+        await conn.execute("DELETE FROM files WHERE owner_email = $1", owner)
+    
     return {"message": "All files cleared successfully"}
 
 # ═══════════════════════════════════════════════════════════════════════
-#  Collections  (persisted to Supabase)
+#  Collections  (persisted to Supabase, user-scoped)
 # ═══════════════════════════════════════════════════════════════════════
 
-async def _perform_background_save(task_id: str, collection_name: str, config: dict, df: pd.DataFrame):
+async def _perform_background_save(task_id: str, collection_name: str, config: dict, df: pd.DataFrame, owner: str):
     try:
         _check_task_cancelled(task_id)
         task_store[task_id] = {"status": "processing", "progress": 5, "message": "Initiating save sequence..."}
         _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 15, "message": "Compressing and writing CSV data..."})
         result_filename = f"result_{uuid.uuid4().hex}.zip"
-        file_path = os.path.join("results", result_filename)
+        
+        # Save to user-scoped result directory
+        user_result_dir = os.path.join(RESULT_DIR, owner)
+        os.makedirs(user_result_dir, exist_ok=True)
+        file_path = os.path.join(user_result_dir, result_filename)
         
         _check_task_cancelled(task_id)
         # Offload ZIP-compressed CSV writing to a thread
@@ -508,20 +722,21 @@ async def _perform_background_save(task_id: str, collection_name: str, config: d
         async with pg_pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO collections (name, config, result_csv)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (name) DO UPDATE
+                INSERT INTO collections (name, owner_email, config, result_csv)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT ON CONSTRAINT collections_name_owner_key DO UPDATE
                     SET config = EXCLUDED.config,
                         result_csv = EXCLUDED.result_csv
                 """,
                 collection_name,
+                owner,
                 json.dumps(config),
                 result_filename,
             )
         
         _check_task_cancelled(task_id)
         task_store[task_id] = {"status": "completed", "progress": 100, "message": "Collection saved successfully!"}
-        logger.info(f"Background: Collection '{collection_name}' persisted to database")
+        logger.info(f"Background: Collection '{collection_name}' persisted for {owner}")
     except Exception as e:
         if task_store.get(task_id, {}).get("status") == "cancelled":
             logger.info(f"Background operation {task_id} successfully halted.")
@@ -530,27 +745,37 @@ async def _perform_background_save(task_id: str, collection_name: str, config: d
         task_store[task_id] = {"status": "failed", "error": str(e)}
 
 @app.post("/collections")
-async def save_collection(collection: CollectionSchema, background_tasks: BackgroundTasks):
+async def save_collection(
+    collection: CollectionSchema,
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(None),
+):
+    owner = get_current_user(authorization)
     task_id = str(uuid.uuid4())
-    if collection.result_id and collection.result_id in storage:
-        df = storage[collection.result_id]
-        task_store[task_id] = {"status": "queued", "progress": 0, "message": "Queuing save operation..."}
-        background_tasks.add_task(_perform_background_save, task_id, collection.name, collection.config, df)
-        return {"task_id": task_id}
+    if collection.result_id:
+        skey = _scoped_key(owner, collection.result_id)
+        if skey in storage:
+            df = storage[skey]
+            task_store[task_id] = {"status": "queued", "progress": 0, "message": "Queuing save operation..."}
+            background_tasks.add_task(_perform_background_save, task_id, collection.name, collection.config, df, owner)
+            return {"task_id": task_id}
     
     # If no result id, just save metadata (fast)
     async with pg_pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO collections (name, config) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET config = EXCLUDED.config",
-            collection.name, json.dumps(collection.config)
+            """INSERT INTO collections (name, owner_email, config) VALUES ($1, $2, $3) 
+               ON CONFLICT ON CONSTRAINT collections_name_owner_key DO UPDATE SET config = EXCLUDED.config""",
+            collection.name, owner, json.dumps(collection.config)
         )
     return {"message": "Metadata saved successfully"}
 
 @app.get("/collections")
-async def get_collections():
+async def get_collections(authorization: Optional[str] = Header(None)):
+    owner = get_current_user(authorization)
     async with pg_pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT name, config, (result_csv IS NOT NULL) AS has_result FROM collections"
+            "SELECT name, config, (result_csv IS NOT NULL) AS has_result FROM collections WHERE owner_email = $1 OR owner_email = '' OR owner_email IS NULL",
+            owner,
         )
     cols = []
     for r in rows:
@@ -562,9 +787,21 @@ async def get_collections():
     return {"collections": cols}
 
 @app.delete("/collections/{name}")
-async def delete_collection(name: str):
+async def delete_collection(name: str, authorization: Optional[str] = Header(None)):
+    owner = get_current_user(authorization)
     async with pg_pool.acquire() as conn:
-        result = await conn.execute("DELETE FROM collections WHERE name = $1", name)
+        # Also delete the result file from disk
+        row = await conn.fetchrow(
+            "SELECT result_csv FROM collections WHERE name = $1 AND owner_email = $2", name, owner
+        )
+        if row and row["result_csv"]:
+            result_path = os.path.join(RESULT_DIR, owner, row["result_csv"])
+            if os.path.exists(result_path):
+                os.remove(result_path)
+        
+        result = await conn.execute(
+            "DELETE FROM collections WHERE name = $1 AND owner_email = $2", name, owner
+        )
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Collection not found")
     return {"message": f"Collection '{name}' deleted successfully"}
@@ -583,15 +820,16 @@ async def cancel_task(task_id: str):
     return {"message": "Task cancellation requested"}
 
 @app.get("/collections/download/{name}")
-async def download_collection_result(name: str):
+async def download_collection_result(name: str, email: str = Query(...)):
+    owner = email
     async with pg_pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT result_csv FROM collections WHERE name = $1", name
+            "SELECT result_csv FROM collections WHERE name = $1 AND owner_email = $2", name, owner
         )
     if not row or not row["result_csv"]:
         raise HTTPException(status_code=404, detail="Result not found or not yet generated")
 
-    file_path = os.path.join("results", row["result_csv"])
+    file_path = os.path.join(RESULT_DIR, owner, row["result_csv"])
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Result file missing on server")
 
@@ -606,7 +844,7 @@ async def download_collection_result(name: str):
     )
 
 # ═══════════════════════════════════════════════════════════════════════
-#  Join Engine
+#  Join Engine  (FIXED: no more cartesian products)
 # ═══════════════════════════════════════════════════════════════════════
 
 @app.get("/tasks/{task_id}")
@@ -620,15 +858,15 @@ def _check_task_cancelled(task_id: str):
         raise Exception("Task cancelled by user")
 
 # Non-async version so it runs in a thread pool and doesn't block the event loop
-def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_a: List[str], keys_b: List[str], join_type: str, transforms: Optional[JoinTransformations]):
+def _perform_background_join(task_id: str, owner: str, file_a_id: str, file_b_id: str, keys_a: List[str], keys_b: List[str], join_type: str, transforms: Optional[JoinTransformations]):
     try:
         _check_task_cancelled(task_id)
         task_store[task_id] = {"status": "processing", "progress": 5, "message": "Preparing work area..."}
         _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 15, "message": "Accessing source datasets..."})
         _check_task_cancelled(task_id)
-        df_a = load_dataframe(file_a_id)
-        df_b = load_dataframe(file_b_id)
+        df_a = load_dataframe(owner, file_a_id)
+        df_b = load_dataframe(owner, file_b_id)
         
         _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 30, "message": "Performing join logic..."})
@@ -636,16 +874,16 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
         df_a = df_a.copy()
         df_b = df_b.copy()
 
-        import re
+        # ─── FIXED: Safe normalization (trim + lowercase only) ───────
+        # The old normalize_val() stripped all non-digits and took last 10,
+        # which caused cartesian products on non-phone columns.
         def normalize_val(val):
-            val_str = str(val).strip()
-            # If it looks like a phone number (has digits and maybe a +)
-            digits = re.sub(r'\D', '', val_str)
-            if len(digits) >= 10:
-                return digits[-10:]
-            return digits
+            """Safe normalization: strip whitespace and lowercase for consistent matching."""
+            if pd.isna(val):
+                return val
+            return str(val).strip().lower()
 
-        # Cast join keys to string and normalize to prevent type mismatch and format issues
+        # Cast join keys to normalized strings to prevent type mismatch
         if keys_a:
             for col in keys_a:
                 if col in df_a.columns:
@@ -655,27 +893,55 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
                 if col in df_b.columns:
                     df_b[col] = df_b[col].apply(normalize_val)
 
+        # ─── CRITICAL: Deduplicate on join keys BEFORE merging ───────
+        # Without this, if key "ECO CYBER" appears 3× in A and 4× in B,
+        # pd.merge produces 3×4=12 rows (cartesian product per key).
+        # Deduplicating keeps only the first occurrence of each key value,
+        # so each key matches at most once → no row explosion.
+        if join_type != "append":
+            if keys_a:
+                valid_keys_a = [k for k in keys_a if k in df_a.columns]
+                if valid_keys_a:
+                    logger.info(f"Pre-merge dedup: A had {len(df_a)} rows, deduplicating on {valid_keys_a}")
+                    df_a = df_a.drop_duplicates(subset=valid_keys_a, keep='first')
+                    logger.info(f"Pre-merge dedup: A now has {len(df_a)} rows")
+            if keys_b:
+                valid_keys_b = [k for k in keys_b if k in df_b.columns]
+                if valid_keys_b:
+                    logger.info(f"Pre-merge dedup: B had {len(df_b)} rows, deduplicating on {valid_keys_b}")
+                    df_b = df_b.drop_duplicates(subset=valid_keys_b, keep='first')
+                    logger.info(f"Pre-merge dedup: B now has {len(df_b)} rows")
+
         if join_type == "append":
             common_columns = list(set(df_a.columns) & set(df_b.columns))
             merged_df = pd.concat([df_a[common_columns], df_b[common_columns]], ignore_index=True)
         elif join_type == "left_anti":
             merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how="left", indicator=True, suffixes=("_fileA", "_fileB"))
             merged_df = merged_df[merged_df["_merge"] == "left_only"].drop(columns=["_merge"])
+            # For anti-joins, keep only columns from the source side
+            cols_to_keep = [c for c in merged_df.columns if not c.endswith("_fileB")]
+            merged_df = merged_df[cols_to_keep]
+            # Clean up suffixed column names from the kept side
+            merged_df.columns = [c.replace("_fileA", "") if c.endswith("_fileA") else c for c in merged_df.columns]
         elif join_type == "right_anti":
             merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how="right", indicator=True, suffixes=("_fileA", "_fileB"))
             merged_df = merged_df[merged_df["_merge"] == "right_only"].drop(columns=["_merge"])
+            # For anti-joins, keep only columns from the source side
+            cols_to_keep = [c for c in merged_df.columns if not c.endswith("_fileA")]
+            merged_df = merged_df[cols_to_keep]
+            # Clean up suffixed column names from the kept side
+            merged_df.columns = [c.replace("_fileB", "") if c.endswith("_fileB") else c for c in merged_df.columns]
         elif join_type == "full_anti":
             merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how="outer", indicator=True, suffixes=("_fileA", "_fileB"))
             merged_df = merged_df[merged_df["_merge"] != "both"].drop(columns=["_merge"])
         else:
             merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how=join_type, suffixes=("_fileA", "_fileB"))
 
+        # Safety net: drop any remaining fully-identical duplicate rows
+        merged_df = merged_df.drop_duplicates()
+
         _check_task_cancelled(task_id)
         task_store[task_id].update({"progress": 60, "message": "Applying transformations..."})
-        # ... (Transformation logic simplified here, reusing existing code logic)
-        # Note: I will keep the actual transformation code from the existing function
-        
-        # (Re-inserting the actual logic from join_data below in multi_replace)
         
         if transforms:
             if transforms.cast:
@@ -699,15 +965,19 @@ def _perform_background_join(task_id: str, file_a_id: str, file_b_id: str, keys_
         if len(merged_df) > JOIN_EXPLOSION_THRESHOLD:
             logger.warning(f"JOIN EXPLOSION: {len(merged_df)} rows generated.")
 
+        # Calculate metrics against original (pre-normalization) row counts
+        orig_a_len = len(df_a)
+        orig_b_len = len(df_b)
         metrics = {
-            "match_rate_a": round(len(merged_df) / len(df_a) * 100, 2) if len(df_a) > 0 else 0,
-            "match_rate_b": round(len(merged_df) / len(df_b) * 100, 2) if len(df_b) > 0 else 0,
+            "match_rate_a": round(len(merged_df) / orig_a_len * 100, 2) if orig_a_len > 0 else 0,
+            "match_rate_b": round(len(merged_df) / orig_b_len * 100, 2) if orig_b_len > 0 else 0,
             "null_count": int(merged_df.isnull().sum().sum()),
             "duplicate_count": int(merged_df.duplicated().sum()),
         }
 
         result_id = str(uuid.uuid4())
-        storage[result_id] = merged_df
+        skey = _scoped_key(owner, result_id)
+        storage[skey] = merged_df
         
         task_store[task_id] = {
             "status": "completed",
@@ -736,24 +1006,36 @@ async def join_data(
     keys_b: Optional[List[str]] = Query(None),
     join_type: str = Query("inner"),
     transforms: Optional[JoinTransformations] = None,
+    authorization: Optional[str] = Header(None),
 ):
+    owner = get_current_user(authorization)
+    
+    # Verify both files belong to this user
+    skey_a = _scoped_key(owner, file_a_id)
+    skey_b = _scoped_key(owner, file_b_id)
+    if skey_a not in storage and skey_a not in file_store:
+        raise HTTPException(status_code=404, detail="Source file A not found or not owned by you")
+    if skey_b not in storage and skey_b not in file_store:
+        raise HTTPException(status_code=404, detail="Source file B not found or not owned by you")
+    
     task_id = str(uuid.uuid4())
     task_store[task_id] = {"status": "queued", "progress": 0, "message": "Waiting for worker..."}
     background_tasks.add_task(
         _perform_background_join,
-        task_id, file_a_id, file_b_id, keys_a, keys_b, join_type, transforms
+        task_id, owner, file_a_id, file_b_id, keys_a, keys_b, join_type, transforms
     )
     return {"task_id": task_id}
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  Preview / Download
+#  Preview / Download (user-scoped)
 # ═══════════════════════════════════════════════════════════════════════
 
 @app.get("/preview/{result_id}")
-async def get_preview(result_id: str):
+async def get_preview(result_id: str, authorization: Optional[str] = Header(None)):
+    owner = get_current_user(authorization)
     try:
-        df = load_dataframe(result_id)
+        df = load_dataframe(owner, result_id)
     except Exception:
         raise HTTPException(status_code=404, detail="Result not found")
 
@@ -761,12 +1043,59 @@ async def get_preview(result_id: str):
     return {
         "data": preview_df.to_dict(orient="records"),
         "columns": preview_df.columns.tolist(),
+        "metrics": {
+            "row_count": len(df),
+            "col_count": len(df.columns),
+            "null_count": int(df.isnull().sum().sum()),
+            "duplicate_count": int(df.duplicated().sum()),
+        }
+    }
+
+class ColumnDropRequest(BaseModel):
+    columns: List[str]
+
+@app.delete("/result/{result_id}/columns")
+async def drop_result_columns(
+    result_id: str, 
+    req: ColumnDropRequest,
+    authorization: Optional[str] = Header(None)
+):
+    owner = get_current_user(authorization)
+    try:
+        df = load_dataframe(owner, result_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Result not found or expired")
+
+    # Drop columns
+    cols_to_drop = [c for c in req.columns if c in df.columns]
+    if cols_to_drop:
+        df = df.drop(columns=cols_to_drop)
+        skey = _scoped_key(owner, result_id)
+        storage[skey] = df  # Update in-memory store
+
+    # Return updated preview and metrics
+    preview_df = df.head(PREVIEW_LIMIT).fillna("")
+    return {
+        "message": f"Successfully dropped {len(cols_to_drop)} columns",
+        "data": preview_df.to_dict(orient="records"),
+        "columns": preview_df.columns.tolist(),
+        "metrics": {
+            "row_count": len(df),
+            "col_count": len(df.columns),
+            "null_count": int(df.isnull().sum().sum()),
+            "duplicate_count": int(df.duplicated().sum()),
+        }
     }
 
 @app.get("/download/{result_id}")
-async def download_result(result_id: str, filename: Optional[str] = Query(None)):
+async def download_result(
+    result_id: str,
+    email: str = Query(...),
+    filename: Optional[str] = Query(None),
+):
+    owner = email
     try:
-        df = load_dataframe(result_id)
+        df = load_dataframe(owner, result_id)
     except Exception:
         raise HTTPException(status_code=404, detail="Result not found")
 

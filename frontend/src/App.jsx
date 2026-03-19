@@ -804,11 +804,69 @@ function PipelineBuilder({
   );
 }
 
-function ReviewView({ previewData, metrics, saveProject }) {
+function ReviewView({ previewData, metrics, saveProject, droppedResultColumns, setDroppedResultColumns, onApplyColumnDrops }) {
+  const handleToggleColumn = (col) => {
+    if (droppedResultColumns.includes(col)) {
+      setDroppedResultColumns(droppedResultColumns.filter(c => c !== col));
+    } else {
+      setDroppedResultColumns([...droppedResultColumns, col]);
+    }
+  };
+
+  const visibleColumns = previewData ? previewData.columns.filter(c => !droppedResultColumns.includes(c)) : [];
+
   return (
     <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-white">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 items-start">
         <div className="lg:col-span-2 space-y-10">
+          
+          {/* Manage Output Columns Section */}
+          {previewData && (
+            <section className="glass-card p-10 ring-1 ring-white/5 space-y-6">
+              <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                <div>
+                  <h3 className="text-xl font-black flex items-center gap-3">
+                    <Settings className="w-5 h-5 text-indigo-400" /> Manage Output Columns
+                  </h3>
+                  <p className="text-xs text-gray-400 font-bold mt-1">Select columns to exclude from the final download</p>
+                </div>
+                {droppedResultColumns.length > 0 && (
+                  <button 
+                    onClick={onApplyColumnDrops}
+                    className="px-6 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-full shadow-lg shadow-rose-500/20 active:scale-95 transition-all flex items-center gap-2 animate-in slide-in-from-right-4"
+                  >
+                    <Trash2 className="w-4 h-4" /> Apply Deletions ({droppedResultColumns.length})
+                  </button>
+                )}
+              </div>
+              
+              <div className="flex flex-wrap gap-2">
+                {previewData.columns.map(col => {
+                  const isDropped = droppedResultColumns.includes(col);
+                  return (
+                    <button
+                      key={col}
+                      onClick={() => handleToggleColumn(col)}
+                      className={cn(
+                        "px-4 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-2 group",
+                        isDropped 
+                          ? "bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20" 
+                          : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+                      )}
+                    >
+                      {isDropped ? (
+                        <span className="flex items-center gap-1 opacity-70 group-hover:opacity-100"><Plus className="w-3 h-3" /> Restore</span>
+                      ) : (
+                        <span className="flex items-center gap-1"><X className="w-3 h-3 opacity-50 group-hover:opacity-100" /> Keep</span>
+                      )}
+                      <span className={isDropped ? "line-through opacity-70" : ""}>{col}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           <section className="glass-card overflow-hidden ring-1 ring-white/5">
             <div className="p-10 border-b border-white/5 flex items-center justify-between bg-white/5">
               <div>
@@ -817,6 +875,11 @@ function ReviewView({ previewData, metrics, saveProject }) {
                 </h2>
                 <p className="text-xs text-gray-400 font-bold uppercase tracking-[0.2em] mt-2">First 50 synthesized records</p>
               </div>
+              {previewData && (
+                <div className="text-xs font-bold text-blue-400 bg-blue-500/10 px-4 py-2 rounded-full ring-1 ring-blue-500/20">
+                  Showing {visibleColumns.length} of {previewData.columns.length} columns
+                </div>
+              )}
             </div>
 
             <div className="overflow-x-auto max-h-[700px] custom-scrollbar">
@@ -829,7 +892,7 @@ function ReviewView({ previewData, metrics, saveProject }) {
                 <table className="w-full border-collapse text-left">
                   <thead>
                     <tr className="bg-white/5 backdrop-blur-md z-10 sticky top-0 border-b border-white/10">
-                      {previewData.columns.map(col => (
+                      {visibleColumns.map(col => (
                         <th key={col} className="px-8 py-5 text-[10px] font-black text-blue-300 uppercase tracking-[0.2em] whitespace-nowrap">{col}</th>
                       ))}
                     </tr>
@@ -837,7 +900,7 @@ function ReviewView({ previewData, metrics, saveProject }) {
                   <tbody className="divide-y divide-white/5 bg-transparent">
                     {previewData.data.map((row, i) => (
                       <tr key={i} className="hover:bg-white/5 transition-colors group">
-                        {previewData.columns.map(col => (
+                        {visibleColumns.map(col => (
                           <td key={`${i}-${col}`} className="px-8 py-4 text-sm font-medium text-gray-300 group-hover:text-white transition-colors whitespace-nowrap">{String(row[col])}</td>
                         ))}
                       </tr>
@@ -940,6 +1003,36 @@ function AuthScreen({ stage, setStage, loading, authData, setAuthData, onSubmit,
               {stage === 'otp' && `Enter the code sent to ${authData.email}`}
             </p>
           </div>
+
+          {/* Auth Error / Success Messages */}
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl flex items-start gap-3"
+              >
+                <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-rose-400">{typeof error === 'object' ? JSON.stringify(error) : error}</p>
+                </div>
+              </motion.div>
+            )}
+            {success && (
+              <motion.div
+                initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex items-start gap-3"
+              >
+                <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-emerald-400">{success}</p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <AnimatePresence mode="wait">
             {stage === 'otp' && (
@@ -1199,13 +1292,14 @@ function App() {
   const [showCollections, setShowCollections] = useState(false);
   const [saveModal, setSaveModal] = useState(false);
   const [collectionName, setCollectionName] = useState("");
+  const [droppedResultColumns, setDroppedResultColumns] = useState([]); // Track dropped columns in final review
 
   useEffect(() => {
     if (error || success) {
       const timer = setTimeout(() => {
         setError(null);
         setSuccess(null);
-      }, 1500);
+      }, 5000);
       return () => clearTimeout(timer);
     }
   }, [error, success]);
@@ -1295,6 +1389,29 @@ function App() {
       await axios.delete(`${API_BASE}/tasks/${taskId}`);
     } catch (err) {
       console.error('Failed to cancel task on server:', err);
+    }
+  };
+
+  const handleApplyColumnDrops = async () => {
+    if (!finalResultId || droppedResultColumns.length === 0) return;
+    
+    setActiveTask({ id: 'drop_cols', type: 'system', progress: 50, message: 'Updating Columns...' });
+    
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await axios.delete(`${API_BASE}/result/${finalResultId}/columns`, {
+        headers: { Authorization: `Bearer ${token}` },
+        data: { columns: droppedResultColumns }
+      });
+      
+      setPreviewData({ data: resp.data.data, columns: resp.data.columns });
+      setMetrics(resp.data.metrics);
+      setDroppedResultColumns([]);
+      setSuccess(resp.data.message || 'Columns updated successfully');
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to update columns');
+    } finally {
+      setActiveTask(null);
     }
   };
 
@@ -1654,7 +1771,7 @@ function App() {
       setSuccess("Preparing your file...");
       await new Promise(r => setTimeout(r, 200));
 
-      const downloadUrl = `${API_BASE}/download/${resultId}?filename=${encodeURIComponent(cleanName)}`;
+      const downloadUrl = `${API_BASE}/download/${resultId}?filename=${encodeURIComponent(cleanName)}&email=${encodeURIComponent(user?.email || 'null')}`;
       
       const link = document.createElement('a');
       link.href = downloadUrl;
@@ -1817,7 +1934,16 @@ function App() {
                 activeTask={activeTask}
               />
             )}
-            {currentStage === 2 && <ReviewView previewData={previewData} metrics={metrics} saveProject={saveProject} />}
+            {currentStage === 2 && (
+              <ReviewView 
+                previewData={previewData} 
+                metrics={metrics} 
+                saveProject={saveProject}
+                droppedResultColumns={droppedResultColumns}
+                setDroppedResultColumns={setDroppedResultColumns}
+                onApplyColumnDrops={handleApplyColumnDrops}
+              />
+            )}
           </motion.div>
         </AnimatePresence>
       </main>
@@ -1863,7 +1989,20 @@ function App() {
                       <div className="flex items-center gap-2">
                         {col.has_result && (
                           <button
-                            onClick={() => window.open(`${API_BASE}/collections/download/${col.name}`, '_blank')}
+                            onClick={() => {
+                              try {
+                                const email = user?.email || 'null';
+                                const downloadUrl = `${API_BASE}/collections/download/${encodeURIComponent(col.name)}?email=${encodeURIComponent(email)}`;
+                                const link = document.createElement('a');
+                                link.href = downloadUrl;
+                                link.setAttribute('download', `${col.name}_result.zip`);
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                              } catch (err) {
+                                setError('Failed to download result.');
+                              }
+                            }}
                             className="px-5 py-2.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 transition-all active:scale-95 flex items-center gap-2"
                           >
                             <Download className="w-4 h-4" /> Result

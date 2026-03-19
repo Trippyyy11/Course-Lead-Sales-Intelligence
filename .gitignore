@@ -5,8 +5,9 @@
 .env.test.local
 .env.production.local
 
-# Results-files
+# Results-files & uploads
 backend/results/
+backend/uploads/
 
 # Dependencies
 node_modules/
