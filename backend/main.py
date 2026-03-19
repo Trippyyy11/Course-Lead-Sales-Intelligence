@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import os
 import platform
+import time
 from datetime import datetime, timedelta, timezone
 import random
 import jwt
@@ -83,6 +84,9 @@ RESULT_DIR = os.getenv("RESULT_DIR", os.path.join(_DATA_DIR, "results"))
 logger.info(f"Upload directory: {UPLOAD_DIR}")
 logger.info(f"Result directory: {RESULT_DIR}")
 
+STORAGE_CLEANUP_HOURS = int(os.getenv("STORAGE_CLEANUP_HOURS", "24"))
+STORAGE_CLEANUP_INTERVAL = int(os.getenv("STORAGE_CLEANUP_INTERVAL_SECONDS", "3600"))
+
 # ─── Pydantic Models ────────────────────────────────────────────────
 class AuthSignupRequest(BaseModel):
     email: str
@@ -111,13 +115,19 @@ class JoinTransformations(BaseModel):
     cast: Optional[Dict[str, str]] = None
 
 # ─── JWT Helper ──────────────────────────────────────────────────────
-def get_current_user(authorization: Optional[str]) -> str:
-    """Extract and validate the user email from the Authorization header."""
-    if not authorization or not authorization.startswith("Bearer "):
+def get_current_user(authorization: Optional[str] = Header(None), token: Optional[str] = Query(None)) -> str:
+    """Extract and validate the user email from the Authorization header or token query param."""
+    auth_token = None
+    if authorization and authorization.startswith("Bearer "):
+        auth_token = authorization.replace("Bearer ", "")
+    elif token:
+        auth_token = token
+    
+    if not auth_token:
         raise HTTPException(status_code=401, detail="Not authenticated. Please log in.")
-    token = authorization.replace("Bearer ", "")
+    
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(auth_token, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
         if not email:
             raise HTTPException(status_code=401, detail="Invalid token payload.")
@@ -287,6 +297,54 @@ storage: Dict[str, pd.DataFrame] = {}
 # task_store: {task_id: {"status": str, "progress": int, "result": any, "error": str}}
 task_store: Dict[str, dict] = {}
 
+# ─── Storage Cleanup Logic ──────────────────────────────────────────
+async def storage_cleanup_loop():
+    """Background task to periodically clean up old files and data."""
+    logger.info(f"Storage cleanup task started (Interval: {STORAGE_CLEANUP_INTERVAL}s, Threshold: {STORAGE_CLEANUP_HOURS}h)")
+    
+    while True:
+        try:
+            await asyncio.sleep(STORAGE_CLEANUP_INTERVAL)
+            threshold_time = time.time() - (STORAGE_CLEANUP_HOURS * 3600)
+            deleted_files = 0
+            
+            # Scan UPLOAD_DIR
+            if os.path.exists(UPLOAD_DIR):
+                for owner_dir in os.listdir(UPLOAD_DIR):
+                    owner_path = os.path.join(UPLOAD_DIR, owner_dir)
+                    if not os.path.isdir(owner_path):
+                        continue
+                        
+                    for filename in os.listdir(owner_path):
+                        if filename == "_metadata.json":
+                            continue
+                        file_path = os.path.join(owner_path, filename)
+                        if os.path.isfile(file_path) and os.path.getmtime(file_path) < threshold_time:
+                            file_id = filename.replace(".csv", "")
+                            skey = f"{owner_dir}:{file_id}"
+                            
+                            # 1. Delete from memory stores
+                            storage.pop(skey, None)
+                            file_store.pop(skey, None)
+                            
+                            # 2. Delete from disk
+                            os.remove(file_path)
+                            deleted_files += 1
+                            
+                            # 3. Delete from database
+                            if pg_pool:
+                                async with pg_pool.acquire() as conn:
+                                    await conn.execute("DELETE FROM files WHERE id = $1 AND owner_email = $2", file_id, owner_dir)
+                    
+                    # Update metadata file for user
+                    _save_file_metadata(owner_dir)
+
+            if deleted_files > 0:
+                logger.info(f"Cleanup cycle completed: deleted {deleted_files} old upload file(s).")
+                
+        except Exception as e:
+            logger.error(f"Error in storage cleanup loop: {e}")
+
 # ─── Startup / Shutdown ─────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
@@ -302,6 +360,9 @@ async def startup():
         statement_cache_size=0
     )
     logger.info("Connected to Supabase PostgreSQL")
+
+    # Start background cleanup task
+    asyncio.create_task(storage_cleanup_loop())
 
     async with pg_pool.acquire() as conn:
         await conn.execute("""
@@ -343,6 +404,27 @@ async def startup():
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS shared_files (
+                id SERIAL PRIMARY KEY,
+                file_id TEXT NOT NULL,
+                owner_email TEXT NOT NULL,
+                shared_with_email TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(file_id, shared_with_email)
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS shared_collections (
+                id SERIAL PRIMARY KEY,
+                collection_name TEXT NOT NULL,
+                owner_email TEXT NOT NULL,
+                shared_with_email TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(collection_name, shared_with_email)
+            );
+        """)
+
 
         # Migration: add owner_email column if it doesn't exist (for existing DBs)
         try:
@@ -629,15 +711,91 @@ async def upload_files(
 
     return {"message": "Files uploaded successfully", "files": uploaded_info}
 
+@app.get("/files/download/{file_id}")
+async def download_file(
+    file_id: str,
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None)
+):
+    owner = get_current_user(authorization, token)
+    
+    async with pg_pool.acquire() as conn:
+        file_record = await conn.fetchrow(
+            """
+            SELECT name, owner_email 
+            FROM files 
+            WHERE id = $1 AND (owner_email = $2 OR id IN (SELECT file_id FROM shared_files WHERE shared_with_email = $2))
+            """,
+            file_id, owner
+        )
+        
+        if not file_record:
+            raise HTTPException(status_code=404, detail="File not found or not authorized")
+        
+        # Determine path (uploaded files are in owner's subdir)
+        filename = file_record['name']
+        file_owner = file_record['owner_email']
+        file_path = os.path.join(UPLOAD_DIR, file_owner, filename)
+        
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Physical file missing")
+            
+        return FileResponse(file_path, filename=filename)
+
 @app.get("/files")
-async def get_files(authorization: Optional[str] = Header(None)):
-    owner = get_current_user(authorization)
+async def get_files(authorization: Optional[str] = Header(None), token: Optional[str] = Query(None)):
+    owner = get_current_user(authorization, token)
+    # 1. Get owned files from memory
     user_files = [
-        {k: v for k, v in info.items() if k != "owner"}
+        {**info, "is_owner": True, "shared_with": []}
         for info in file_store.values()
         if info.get("owner") == owner
     ]
+    
+    # 2. Get shared files from DB
+    async with pg_pool.acquire() as conn:
+        shared_records = await conn.fetch(
+            """SELECT f.* FROM files f 
+               JOIN shared_files s ON f.id = s.file_id 
+               WHERE s.shared_with_email = $1""", 
+            owner
+        )
+        for row in shared_records:
+            user_files.append({
+                "id": row["id"],
+                "name": row["name"],
+                "columns": json.loads(row["columns"]) if isinstance(row["columns"], str) else row["columns"],
+                "is_owner": False,
+                "owner": row["owner_email"],
+            })
+            
     return {"files": user_files}
+
+class ShareFileRequest(BaseModel):
+    file_id: str
+    target_email: str
+
+@app.post("/files/share")
+async def share_file(req: ShareFileRequest, authorization: Optional[str] = Header(None)):
+    owner = get_current_user(authorization)
+    
+    # Verify ownership
+    skey = _scoped_key(owner, req.file_id)
+    if skey not in file_store:
+        raise HTTPException(status_code=403, detail="You do not own this file or it does not exist")
+    
+    async with pg_pool.acquire() as conn:
+        # Check if target exists
+        target = await conn.fetchrow("SELECT email FROM users WHERE email = $1", req.target_email.lower())
+        if not target:
+            raise HTTPException(status_code=404, detail="Target user not found")
+        
+        await conn.execute(
+            """INSERT INTO shared_files (file_id, owner_email, shared_with_email) 
+               VALUES ($1, $2, $3) ON CONFLICT DO NOTHING""",
+            req.file_id, owner, req.target_email.lower()
+        )
+    return {"message": f"File shared with {req.target_email}"}
 
 @app.get("/columns/{file_id}")
 async def get_columns(file_id: str, authorization: Optional[str] = Header(None)):
@@ -662,8 +820,9 @@ async def delete_file(file_id: str, authorization: Optional[str] = Header(None))
         os.remove(persist_path)
     _save_file_metadata(owner)
     
-    # Remove from DB
+    # Remove from DB and Shares
     async with pg_pool.acquire() as conn:
+        await conn.execute("DELETE FROM shared_files WHERE file_id = $1", file_id)
         await conn.execute("DELETE FROM files WHERE id = $1 AND owner_email = $2", file_id, owner)
     
     return {"message": "File deleted successfully"}
@@ -774,7 +933,7 @@ async def get_collections(authorization: Optional[str] = Header(None)):
     owner = get_current_user(authorization)
     async with pg_pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT name, config, (result_csv IS NOT NULL) AS has_result FROM collections WHERE owner_email = $1 OR owner_email = '' OR owner_email IS NULL",
+            "SELECT name, config, (result_csv IS NOT NULL) AS has_result FROM collections WHERE owner_email = $1",
             owner,
         )
     cols = []
@@ -785,6 +944,7 @@ async def get_collections(authorization: Optional[str] = Header(None)):
             "has_result": r["has_result"],
         })
     return {"collections": cols}
+
 
 @app.delete("/collections/{name}")
 async def delete_collection(name: str, authorization: Optional[str] = Header(None)):
@@ -820,8 +980,12 @@ async def cancel_task(task_id: str):
     return {"message": "Task cancellation requested"}
 
 @app.get("/collections/download/{name}")
-async def download_collection_result(name: str, email: str = Query(...)):
-    owner = email
+async def download_collection_result(
+    name: str, 
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None)
+):
+    owner = get_current_user(authorization, token)
     async with pg_pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT result_csv FROM collections WHERE name = $1 AND owner_email = $2", name, owner
@@ -1032,8 +1196,12 @@ async def join_data(
 # ═══════════════════════════════════════════════════════════════════════
 
 @app.get("/preview/{result_id}")
-async def get_preview(result_id: str, authorization: Optional[str] = Header(None)):
-    owner = get_current_user(authorization)
+async def get_preview(
+    result_id: str, 
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None)
+):
+    owner = get_current_user(authorization, token)
     try:
         df = load_dataframe(owner, result_id)
     except Exception:
@@ -1058,9 +1226,10 @@ class ColumnDropRequest(BaseModel):
 async def drop_result_columns(
     result_id: str, 
     req: ColumnDropRequest,
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None)
 ):
-    owner = get_current_user(authorization)
+    owner = get_current_user(authorization, token)
     try:
         df = load_dataframe(owner, result_id)
     except Exception:
@@ -1090,10 +1259,11 @@ async def drop_result_columns(
 @app.get("/download/{result_id}")
 async def download_result(
     result_id: str,
-    email: str = Query(...),
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
     filename: Optional[str] = Query(None),
 ):
-    owner = email
+    owner = get_current_user(authorization, token)
     try:
         df = load_dataframe(owner, result_id)
     except Exception:

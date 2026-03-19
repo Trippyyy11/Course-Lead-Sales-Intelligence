@@ -6,7 +6,8 @@ import {
   Upload, Table, Download, Settings, FileText,
   AlertCircle, CheckCircle2, Plus, Trash2,
   ArrowRight, Layers, Sparkles, Database, X,
-  Shredder, User, Mail, Lock, ShieldCheck, LogOut, KeyRound
+  Shredder, User, Mail, Lock, ShieldCheck, LogOut, KeyRound,
+  MoreVertical, Share2
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -17,6 +18,15 @@ function cn(...inputs) {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+
+// Add a request interceptor to dynamically attach the token
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 /** Custom Select Component for Premium UI */
 /** Visual Representation of Join Types */
@@ -223,6 +233,53 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
 
         {isOpen && createPortal(menuContent, document.body)}
       </div>
+    </div>
+  );
+}
+
+function FileActions({ onDownload, onDelete }) {
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef(null);
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button 
+        onClick={() => setShowMenu(!showMenu)}
+        className="p-2 text-gray-500 hover:text-white hover:bg-white/5 rounded-xl transition-all"
+      >
+        <MoreVertical className="w-5 h-5" />
+      </button>
+
+      <AnimatePresence>
+        {showMenu && (
+          <>
+            <div className="fixed inset-0 z-[120]" onClick={() => setShowMenu(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -10 }}
+              className="absolute right-0 mt-2 w-48 bg-[#1a1c1e] border border-white/10 rounded-2xl shadow-2xl z-[130] p-1.5 overflow-hidden"
+            >
+              {onDownload && (
+                <button 
+                  onClick={() => { onDownload(); setShowMenu(false); }}
+                  className="w-full text-left px-4 py-3 rounded-xl text-xs font-bold text-gray-400 hover:bg-blue-600 hover:text-white transition-all flex items-center gap-3"
+                >
+                  <Download className="w-4 h-4" /> Download
+                </button>
+              )}
+              {onDelete && (
+                <button 
+                  onClick={() => { onDelete(); setShowMenu(false); }}
+                  className="w-full text-left px-4 py-3 rounded-xl text-xs font-bold text-gray-400 hover:bg-rose-600 hover:text-white transition-all flex items-center gap-3"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete
+                </button>
+              )}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -472,13 +529,13 @@ function SourcesView({ files, handleFileUpload, uploadLoading, uploadProgress, h
                       </p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setDeleteConfirm({ id: f.id, name: f.name })}
-                    className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
+                  <FileActions 
+                    onDelete={() => setDeleteConfirm(f)}
+                    onDownload={() => {
+                      const token = localStorage.getItem('token');
+                      window.open(`${API_BASE}/files/download/${f.id}?token=${token}`, '_blank');
+                    }}
+                  />
                 </motion.div>
               ))
             )}
@@ -1292,6 +1349,7 @@ function App() {
   const [showCollections, setShowCollections] = useState(false);
   const [saveModal, setSaveModal] = useState(false);
   const [collectionName, setCollectionName] = useState("");
+
   const [droppedResultColumns, setDroppedResultColumns] = useState([]); // Track dropped columns in final review
 
   useEffect(() => {
@@ -1764,14 +1822,12 @@ function App() {
     setDownloadModal({ show: false, resultId: null });
     
     if (!name) name = `result_${Date.now()}`;
-    // Strip common extensions if user tried to add them, we'll append .zip
     const cleanName = name.replace(/\.(csv|zip|xls|xlsx|forge)$/i, '');
     
     try {
       setSuccess("Preparing your file...");
-      await new Promise(r => setTimeout(r, 200));
-
-      const downloadUrl = `${API_BASE}/download/${resultId}?filename=${encodeURIComponent(cleanName)}&email=${encodeURIComponent(user?.email || 'null')}`;
+      const token = localStorage.getItem('token');
+      const downloadUrl = `${API_BASE}/download/${resultId}?filename=${encodeURIComponent(cleanName)}&token=${token}`;
       
       const link = document.createElement('a');
       link.href = downloadUrl;
@@ -1962,62 +2018,51 @@ function App() {
       <AnimatePresence>
         {showCollections && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowCollections(false)} className="absolute inset-0 bg-[#0F0842]/20 backdrop-blur-sm" />
-            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-2xl glass-card p-10 ring-1 ring-white/10 shadow-3xl">
-              <div className="flex items-center justify-between mb-10">
-                <h3 className="text-2xl font-black text-white">Stored Collections</h3>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowCollections(false)} className="absolute inset-0 bg-black/40 backdrop-blur-md" />
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-2xl glass-card p-0 ring-1 ring-white/10 shadow-3xl overflow-hidden">
+              <div className="p-10 pb-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-2xl font-black text-white">Project Library</h3>
+                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mt-1">Manage datasets and collections</p>
+                </div>
                 <button onClick={() => setShowCollections(false)} className="p-3 hover:bg-white/5 rounded-2xl transition-all text-gray-500 hover:text-white"><X className="w-6 h-6" /></button>
               </div>
-              <div className="space-y-4 max-h-[500px] overflow-y-auto pr-4 custom-scrollbar">
-                {collections.length === 0 ? (
-                  <div className="py-20 text-center opacity-10 flex flex-col items-center gap-6 text-white">
-                    <Layers className="w-16 h-16" />
-                    <p className="text-sm font-bold uppercase tracking-[0.5em]">No Collections Found</p>
-                  </div>
-                ) : (
-                  collections.map(col => (
-                    <div key={col.name} className="flex items-center justify-between p-6 bg-[#2a2a2a] border border-[#333333] rounded-2xl group hover:border-[#444444] transition-all shadow-md">
-                      <div className="flex items-center gap-5">
-                        <div className="p-4 bg-blue-500/10 rounded-2xl text-blue-400">
-                          <Database className="w-6 h-6" />
+
+              <div className="p-10 pt-8 space-y-6 max-h-[500px] overflow-y-auto pr-4 custom-scrollbar">
+                <div className="space-y-3">
+                  <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Saved Collections</h4>
+                  {collections.length === 0 ? (
+                    <div className="py-10 text-center opacity-10 flex flex-col items-center gap-4 text-white">
+                      <Layers className="w-12 h-12" />
+                      <p className="text-[10px] font-bold uppercase tracking-[0.5em]">No Collections</p>
+                    </div>
+                  ) : (
+                    collections.map(col => (
+                      <div key={col.name} className="flex items-center justify-between p-5 bg-[#2a2a2a] border border-[#333333] rounded-2xl group hover:border-[#444444] transition-all">
+                        <div className="flex items-center gap-5">
+                          <div className="p-3 bg-blue-500/10 rounded-xl text-blue-400">
+                            <Database className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-bold text-white mb-1">{col.name}</h4>
+                            <p className="text-[10px] text-gray-500 font-medium italic">{col.config?.joins?.length || 0} join steps</p>
+                          </div>
                         </div>
-                        <div>
-                          <h4 className="text-[15px] font-bold text-white mb-1">{col.name}</h4>
-                          <p className="text-[11px] text-gray-500 font-medium italic">{col.config?.joins?.length || 0} join steps</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {col.has_result && (
-                          <button
-                            onClick={() => {
-                              try {
-                                const email = user?.email || 'null';
-                                const downloadUrl = `${API_BASE}/collections/download/${encodeURIComponent(col.name)}?email=${encodeURIComponent(email)}`;
-                                const link = document.createElement('a');
-                                link.href = downloadUrl;
-                                link.setAttribute('download', `${col.name}_result.zip`);
-                                document.body.appendChild(link);
-                                link.click();
-                                document.body.removeChild(link);
-                              } catch (err) {
-                                setError('Failed to download result.');
+                        <div className="flex items-center gap-2">
+                          <FileActions 
+                            onDelete={() => setColDeleteConfirm(col)}
+                            onDownload={() => {
+                              if (col.has_result) {
+                                const token = localStorage.getItem('token');
+                                window.open(`${API_BASE}/collections/download/${encodeURIComponent(col.name)}?token=${token}`, '_blank');
                               }
                             }}
-                            className="px-5 py-2.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 transition-all active:scale-95 flex items-center gap-2"
-                          >
-                            <Download className="w-4 h-4" /> Result
-                          </button>
-                        )}
-                        <button
-                          onClick={() => setColDeleteConfirm(col)}
-                          className="p-3 text-gray-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
+                          />
+                        </div>
                       </div>
-                    </div>
-                  ))
-                )}
+                    ))
+                  )}
+                </div>
               </div>
             </motion.div>
           </div>
@@ -2209,11 +2254,17 @@ function App() {
                 <button
                   onClick={async () => {
                     try {
-                      await axios.delete(`${API_BASE}/collections/${colDeleteConfirm.name}`);
+                      await axios.delete(`${API_BASE}/collections/${encodeURIComponent(colDeleteConfirm.name)}`);
                       setCollections(prev => prev.filter(c => c.name !== colDeleteConfirm.name));
                       setSuccess(`Collection "${colDeleteConfirm.name}" deleted.`);
                     } catch (err) {
-                      setError("Failed to delete collection.");
+                      // If 404, still remove from UI (stale entry)
+                      if (err.response?.status === 404) {
+                        setCollections(prev => prev.filter(c => c.name !== colDeleteConfirm.name));
+                        setSuccess(`Collection "${colDeleteConfirm.name}" removed.`);
+                      } else {
+                        setError("Failed to delete collection.");
+                      }
                     } finally {
                       setColDeleteConfirm(null);
                     }
