@@ -6,7 +6,7 @@ import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from pydantic import BaseModel
 import os
 import platform
@@ -16,9 +16,9 @@ import random
 import jwt
 import bcrypt
 from email.message import EmailMessage
-import aiosmtplib
 import asyncpg
 import logging
+from supabase import create_client, Client
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -30,13 +30,22 @@ from dotenv import load_dotenv
 # Load variables from .env file
 load_dotenv()
 
-# ─── Supabase PostgreSQL ────────────────────────────────────────────
+# ─── Supabase Configuration ──────────────────────────────────────────
 SUPABASE_DB_URL = os.getenv("DATABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 if SUPABASE_DB_URL is None:
     raise ValueError("DATABASE_URL environment variable is not set. Please ensure you have created a .env file.")
 
 pg_pool: Optional[asyncpg.Pool] = None
+supabase: Optional[Client] = None
+
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    logger.info("Supabase Storage client initialized.")
+else:
+    logger.warning("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set. Storage features will be disabled.")
 
 # ─── Auth Configuration ─────────────────────────────────────────────
 SECRET_KEY = os.getenv("SECRET_KEY", "dataforge_super_secret_key")
@@ -875,8 +884,25 @@ async def _perform_background_save(task_id: str, collection_name: str, config: d
             compression={'method': 'zip', 'archive_name': 'data.csv'}
         ))
         
+        # 3. Upload to Supabase Storage if available
+        if supabase:
+            task_store[task_id].update({"progress": 60, "message": "Relaying to cloud storage..."})
+            try:
+                # Read back recorded file into buffer for upload
+                with open(file_path, "rb") as f:
+                    supabase_path = f"{owner}/{result_filename}"
+                    supabase.storage.from_('results').upload(
+                        path=supabase_path,
+                        file=f,
+                        file_options={"content-type": "application/zip"}
+                    )
+                logger.info(f"Supabase: Result uploaded to 'results/{supabase_path}'")
+            except Exception as se:
+                logger.error(f"Supabase Upload Failed: {se}")
+                # Optional: carry on or fail? User wants Supabase, so let's log it.
+        
         _check_task_cancelled(task_id)
-        task_store[task_id].update({"progress": 70, "message": "Updating database..."})
+        task_store[task_id].update({"progress": 85, "message": "Finalizing database records..."})
         
         async with pg_pool.acquire() as conn:
             await conn.execute(
@@ -894,8 +920,8 @@ async def _perform_background_save(task_id: str, collection_name: str, config: d
             )
         
         _check_task_cancelled(task_id)
-        task_store[task_id] = {"status": "completed", "progress": 100, "message": "Collection saved successfully!"}
-        logger.info(f"Background: Collection '{collection_name}' persisted for {owner}")
+        task_store[task_id] = {"status": "completed", "progress": 100, "message": "Collection saved and secured to Cloud!"}
+        logger.info(f"Background: Collection '{collection_name}' persisted (Supabase + Local) for {owner}")
     except Exception as e:
         if task_store.get(task_id, {}).get("status") == "cancelled":
             logger.info(f"Background operation {task_id} successfully halted.")
@@ -955,7 +981,18 @@ async def delete_collection(name: str, authorization: Optional[str] = Header(Non
             "SELECT result_csv FROM collections WHERE name = $1 AND owner_email = $2", name, owner
         )
         if row and row["result_csv"]:
-            result_path = os.path.join(RESULT_DIR, owner, row["result_csv"])
+            result_filename = row["result_csv"]
+            # 1. Delete from Supabase Storage
+            if supabase:
+                try:
+                    supabase_path = f"{owner}/{result_filename}"
+                    supabase.storage.from_('results').remove([supabase_path])
+                    logger.info(f"Supabase: Deleted 'results/{supabase_path}'")
+                except Exception as se:
+                    logger.error(f"Supabase Delete Failed: {se}")
+            
+            # 2. Delete from local disk
+            result_path = os.path.join(RESULT_DIR, owner, result_filename)
             if os.path.exists(result_path):
                 os.remove(result_path)
         
@@ -993,19 +1030,26 @@ async def download_collection_result(
     if not row or not row["result_csv"]:
         raise HTTPException(status_code=404, detail="Result not found or not yet generated")
 
+    # 1. Try Supabase Storage first if available
+    if supabase:
+        try:
+            supabase_path = f"{owner}/{row['result_csv']}"
+            data = supabase.storage.from_('results').download(supabase_path)
+            if data:
+                return StreamingResponse(
+                    io.BytesIO(data),
+                    media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.zip"'}
+                )
+        except Exception as se:
+            logger.warning(f"Supabase pull failed, falling back to local: {se}")
+
+    # 2. Fallback to local disk
     file_path = os.path.join(RESULT_DIR, owner, row["result_csv"])
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Result file missing on server")
+        raise HTTPException(status_code=404, detail="Result file missing everywhere")
 
-    def iter_file():
-        with open(file_path, "rb") as f:
-            yield from f
-
-    return StreamingResponse(
-        iter_file(),
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{name}_result.csv.zip"'},
-    )
+    return FileResponse(file_path, filename=f"{name}.zip", media_type="application/zip")
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Join Engine  (FIXED: no more cartesian products)
@@ -1161,6 +1205,98 @@ def _perform_background_join(task_id: str, owner: str, file_a_id: str, file_b_id
         logger.exception(f"Background Join Failed: {e}")
         task_store[task_id] = {"status": "failed", "error": str(e)}
 
+def _perform_background_multi_join(task_id: str, owner: str, base_file_id: str, target_file_ids: List[str], common_key: str, join_type: str):
+    """Iteratively join multiple files to a base dataframe in a background thread."""
+    try:
+        _check_task_cancelled(task_id)
+        task_store[task_id] = {"status": "processing", "progress": 5, "message": "Initializing multi-merge sequence..."}
+        
+        # Load base dataframe
+        df_result = load_dataframe(owner, base_file_id).copy()
+        
+        # Safe normalization helper (consistent with pairwise matches)
+        def normalize_val(val):
+            if pd.isna(val): return val
+            return str(val).strip().lower()
+
+        # Normalize key in base
+        if common_key in df_result.columns:
+            df_result[common_key] = df_result[common_key].apply(normalize_val)
+            # Deduplicate base if not appending
+            if join_type != "append":
+                df_result = df_result.drop_duplicates(subset=[common_key], keep='first')
+
+        total_targets = len(target_file_ids)
+        for i, target_id in enumerate(target_file_ids):
+            _check_task_cancelled(task_id)
+            # Sub-progress distribution
+            current_progress = int(10 + ((i / total_targets) * 80))
+            task_store[task_id].update({"progress": current_progress, "message": f"Merging file {i+1} of {total_targets}..."})
+            
+            df_target = load_dataframe(owner, target_id).copy()
+            
+            # Normalize key in target
+            if common_key in df_target.columns:
+                df_target[common_key] = df_target[common_key].apply(normalize_val)
+                # Deduplicate target if not appending
+                if join_type != "append":
+                    df_target = df_target.drop_duplicates(subset=[common_key], keep='first')
+            
+            # Perform merge
+            if join_type == "append":
+                common_cols = list(set(df_result.columns) & set(df_target.columns))
+                df_result = pd.concat([df_result[common_cols], df_target[common_cols]], ignore_index=True)
+            elif join_type == "left_anti":
+                df_result = pd.merge(df_result, df_target, on=common_key, how="left", indicator=True, suffixes=("", f"_f{i+1}"))
+                df_result = df_result[df_result["_merge"] == "left_only"].drop(columns=["_merge"])
+                # Keep only result columns
+                cols_to_keep = [c for c in df_result.columns if not c.endswith(f"_f{i+1}")]
+                df_result = df_result[cols_to_keep]
+            elif join_type == "right_anti":
+                df_result = pd.merge(df_result, df_target, on=common_key, how="right", indicator=True, suffixes=("", f"_f{i+1}"))
+                df_result = df_result[df_result["_merge"] == "right_only"].drop(columns=["_merge"])
+                # Keep only target columns
+                cols_to_keep = [c for c in df_result.columns if not c.endswith(f"_orig") or c == common_key] # This logic is trickier in multi-step
+                # Actually, for right_anti in a multi-merge, we just take what's newly unique in the current target
+                # Simplified: result = current_target[~current_target[key].isin(result[key])]
+                df_result = df_target[~df_target[common_key].isin(df_result[common_key])]
+            elif join_type == "full_anti":
+                df_result = pd.merge(df_result, df_target, on=common_key, how="outer", indicator=True, suffixes=("", f"_f{i+1}"))
+                df_result = df_result[df_result["_merge"] != "both"].drop(columns=["_merge"])
+            else:
+                # Standard inner, left, right, outer
+                df_result = pd.merge(df_result, df_target, on=common_key, how=join_type, suffixes=("", f"_f{i+1}"))
+            
+            # Periodic cleanup
+            df_result = df_result.drop_duplicates()
+
+        _check_task_cancelled(task_id)
+        task_store[task_id].update({"progress": 95, "message": "Finalizing multi-merge result..."})
+        
+        result_id = str(uuid.uuid4())
+        skey = _scoped_key(owner, result_id)
+        storage[skey] = df_result
+        
+        task_store[task_id] = {
+            "status": "completed",
+            "progress": 100,
+            "result": {
+                "result_id": result_id,
+                "row_count": len(df_result),
+                "col_count": len(df_result.columns),
+                "columns": df_result.columns.tolist(),
+                "metrics": {
+                    "null_count": int(df_result.isnull().sum().sum()),
+                    "duplicate_count": int(df_result.duplicated().sum())
+                }
+            }
+        }
+        logger.info(f"Multi-Merge Complete: {len(target_file_ids)} targets -> {result_id}")
+    except Exception as e:
+        if task_store.get(task_id, {}).get("status") == "cancelled": return
+        logger.exception(f"Multi-Join Failed: {e}")
+        task_store[task_id] = {"status": "failed", "error": str(e)}
+
 @app.post("/join")
 async def join_data(
     background_tasks: BackgroundTasks,
@@ -1190,14 +1326,75 @@ async def join_data(
     )
     return {"task_id": task_id}
 
+@app.post("/join/multi")
+async def join_multi_data(
+    background_tasks: BackgroundTasks,
+    base_file_id: str = Query(...),
+    target_file_ids: List[str] = Query(...),
+    common_key: str = Query(...),
+    join_type: str = Query("inner"),
+    authorization: Optional[str] = Header(None),
+):
+    owner = get_current_user(authorization)
+    
+    # Verify base exists
+    skey_base = _scoped_key(owner, base_file_id)
+    if skey_base not in storage and skey_base not in file_store:
+        raise HTTPException(status_code=404, detail="Source file not found")
+        
+    task_id = str(uuid.uuid4())
+    task_store[task_id] = {"status": "queued", "progress": 0, "message": "Queuing multi-file operation..."}
+    background_tasks.add_task(
+        _perform_background_multi_join,
+        task_id, owner, base_file_id, target_file_ids, common_key, join_type
+    )
+    return {"task_id": task_id}
+
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Preview / Download (user-scoped)
 # ═══════════════════════════════════════════════════════════════════════
 
+def apply_filters(df: pd.DataFrame, filters_data: Union[str, dict, None]) -> pd.DataFrame:
+    """Apply column-based exact filters to the DataFrame."""
+    if not filters_data:
+        return df
+    
+    try:
+        filters = filters_data
+        if isinstance(filters_data, str):
+            filters = json.loads(filters_data)
+            
+        if not filters or not isinstance(filters, dict):
+            return df
+            
+        filtered_df = df.copy()
+        for col, val in filters.items():
+            if col in filtered_df.columns and val:
+                if isinstance(val, dict) and ("start" in val or "end" in val):
+                    # Date range filter
+                    try:
+                        col_dt = pd.to_datetime(filtered_df[col], errors='coerce')
+                        if val.get("start"):
+                            start_dt = pd.to_datetime(val["start"])
+                            filtered_df = filtered_df[col_dt >= start_dt]
+                        if val.get("end"):
+                            end_dt = pd.to_datetime(val["end"])
+                            filtered_df = filtered_df[col_dt <= end_dt]
+                    except Exception as fe:
+                        logger.error(f"Error filtering date range for {col}: {fe}")
+                else:
+                    # Exact match (since we're using dropdowns of unique values)
+                    filtered_df = filtered_df[filtered_df[col].astype(str) == str(val)]
+        return filtered_df
+    except Exception as e:
+        logger.error(f"Error applying filters: {e}")
+        return df
+
 @app.get("/preview/{result_id}")
 async def get_preview(
     result_id: str, 
+    filters: Optional[str] = Query(None),
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None)
 ):
@@ -1207,15 +1404,65 @@ async def get_preview(
     except Exception:
         raise HTTPException(status_code=404, detail="Result not found")
 
-    preview_df = df.head(PREVIEW_LIMIT).fillna("")
+    # Parse filters once
+    f_dict = {}
+    if filters:
+        try:
+            f_dict = json.loads(filters)
+        except: pass
+
+    # Apply ALL filters for the records preview
+    filtered_df = apply_filters(df, f_dict)
+    preview_df = filtered_df.head(PREVIEW_LIMIT).fillna("")
+    
+    # Calculate unique values and detect types
+    unique_values = {}
+    column_info = {}
+    
+    for col in df.columns:
+        # Detect type
+        dtype = "text"
+        metadata = {}
+        try:
+            # Drop NaNs for type checking
+            s_clean = df[col].dropna()
+            if not s_clean.empty:
+                # Try parsing as datetime
+                s_dt = pd.to_datetime(s_clean, errors='coerce')
+                # If > 70% of non-nulls are dates, treat as date
+                valid_date_ratio = s_dt.notnull().sum() / len(s_clean)
+                if valid_date_ratio > 0.7:
+                    dtype = "date"
+                    metadata = {
+                        "min": s_dt.min().isoformat() if not s_dt.isna().all() else None,
+                        "max": s_dt.max().isoformat() if not s_dt.isna().all() else None
+                    }
+        except:
+            pass
+            
+        column_info[col] = {"type": dtype, **metadata}
+        
+        # Faceted Search Unique Values
+        other_filters = {k: v for k, v in f_dict.items() if k != col}
+        temp_df = apply_filters(df, other_filters)
+        
+        # Limit unique values for performance
+        uvs = temp_df[col].dropna().unique().tolist()
+        if len(uvs) > 100:
+            uvs = uvs[:100]
+        unique_values[col] = sorted([str(x) for x in uvs])
+
     return {
+        "columns": df.columns.tolist(),
         "data": preview_df.to_dict(orient="records"),
-        "columns": preview_df.columns.tolist(),
+        "unique_values": unique_values,
+        "column_info": column_info,
         "metrics": {
-            "row_count": len(df),
+            "row_count": len(filtered_df),
+            "total_count": len(df),
             "col_count": len(df.columns),
-            "null_count": int(df.isnull().sum().sum()),
-            "duplicate_count": int(df.duplicated().sum()),
+            "null_count": int(filtered_df.isnull().sum().sum()),
+            "duplicate_count": int(filtered_df.duplicated().sum())
         }
     }
 
@@ -1259,6 +1506,7 @@ async def drop_result_columns(
 @app.get("/download/{result_id}")
 async def download_result(
     result_id: str,
+    filters: Optional[str] = Query(None),
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None),
     filename: Optional[str] = Query(None),
@@ -1269,6 +1517,9 @@ async def download_result(
     except Exception:
         raise HTTPException(status_code=404, detail="Result not found")
 
+    # Apply filters to the full dataset before download
+    filtered_df = apply_filters(df, filters)
+
     # Use custom filename if provided, otherwise default
     base_name = filename if filename else f"joined_data_{result_id}"
     # Remove any existing extensions user might have passed
@@ -1277,7 +1528,7 @@ async def download_result(
     
     # Generate a ZIP compressed CSV on the fly
     buf = io.BytesIO()
-    df.to_csv(
+    filtered_df.to_csv(
         buf, 
         index=False, 
         compression={'method': 'zip', 'archive_name': 'data.csv'}
@@ -1293,4 +1544,5 @@ async def download_result(
 # ═══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Enable reload for development
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, cloneElement } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { motion, AnimatePresence, color } from 'framer-motion';
@@ -7,7 +7,7 @@ import {
   AlertCircle, CheckCircle2, Plus, Trash2,
   ArrowRight, Layers, Sparkles, Database, X,
   Shredder, User, Mail, Lock, ShieldCheck, LogOut, KeyRound,
-  MoreVertical, Share2
+  MoreVertical, Share2, Info, Minus, Calendar, Zap, Check
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -111,7 +111,7 @@ function JoinDiagram({ type }) {
   );
 }
 
-function CustomSelect({ label, value, options, onChange, placeholder, disabled, className, variant = 'blue' }) {
+function CustomSelect({ label, value, options, onChange, placeholder, variant = 'green', className, disabled, rightElement }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
   const [coords, setCoords] = useState({ top: 0, bottom: 0, left: 0, width: 0, position: 'bottom' });
@@ -121,19 +121,15 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
     const updatePosition = () => {
       if (isOpen && containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
-        const menuHeight = Math.min(options.length * 48 + 20, 256);
         const spaceBelow = window.innerHeight - rect.bottom;
         const spaceAbove = rect.top;
-
-        // Flip if not enough space below AND there is more space above
-        const shouldFlip = spaceBelow < menuHeight + 20 && spaceAbove > spaceBelow;
-
+        
         setCoords({
           top: rect.top,
           bottom: rect.bottom,
           left: rect.left,
           width: rect.width,
-          position: shouldFlip ? 'top' : 'bottom'
+          position: spaceBelow < 250 && spaceAbove > spaceBelow ? 'top' : 'bottom'
         });
       }
     };
@@ -198,7 +194,10 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
 
   return (
     <div className={cn("space-y-2 w-full relative", className)} ref={containerRef}>
-      {label && <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block ml-1">{label}</label>}
+      <div className="flex items-center justify-between px-1">
+        {label && <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block">{label}</label>}
+        {rightElement}
+      </div>
       <div className="relative">
         <button
           type="button"
@@ -206,7 +205,7 @@ function CustomSelect({ label, value, options, onChange, placeholder, disabled, 
           onClick={() => setIsOpen(!isOpen)}
           className={cn(
             "text-left flex items-center justify-between group transition-all duration-300",
-            "bg-[#2a2a2a] border rounded-xl px-4 py-2.5 text-sm w-full text-white placeholder:text-gray-500", // Manually expanded .glass-input logic for better control
+            "bg-[#2a2a2a] border rounded-2xl px-4 py-2.5 text-sm w-full text-white placeholder:text-gray-500", 
             disabled && "opacity-50 cursor-not-allowed",
             isOpen
               ? (variant === 'blue' ? "!border-blue-500/70 !bg-blue-500/15 ring-1 ring-blue-500/20" : "!border-green-500/70 !bg-green-500/20 ring-1 ring-green-500/20")
@@ -593,30 +592,195 @@ function SourcesView({ files, handleFileUpload, uploadLoading, uploadProgress, h
   );
 }
 
+function MultiJoinStep({ config, updateConfig, files, getFileColumns, onShowGuide }) {
+  const commonColumns = useMemo(() => {
+    if (!config.baseFile) return [];
+    let intersected = getFileColumns(config.baseFile);
+    
+    config.targetFiles.forEach(targetId => {
+      const targetCols = getFileColumns(targetId);
+      if (targetCols.length > 0) {
+        intersected = intersected.filter(c => targetCols.includes(c));
+      }
+    });
+
+    return intersected.sort();
+  }, [config.baseFile, config.targetFiles, getFileColumns]);
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="relative"
+    >
+      <div className="absolute -left-4 top-0 bottom-0 w-1 bg-blue-500/30 rounded-full" />
+
+      <div className="glass-card p-10 ring-1 ring-blue-500/20 relative overflow-visible shadow-2xl bg-blue-500/[0.02]">
+        <div className="flex items-center justify-between mb-10">
+          <div className="flex items-center gap-5">
+            <div className="w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center text-xl font-black shadow-2xl">
+              <Zap className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-xl font-black text-white">Multi-File Merge</h3>
+              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Join up to 5 datasets in a single operation</p>
+            </div>
+          </div>
+          <button 
+            type="button" 
+            onClick={onShowGuide}
+            className="p-3 text-blue-500 hover:bg-blue-500/10 rounded-2xl transition-all"
+            title="Join Explanation Guide"
+          >
+            <Info className="w-6 h-6" />
+          </button>
+        </div>
+
+        <div className="space-y-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <CustomSelect
+              label="Primary Base Dataset"
+              value={config.baseFile}
+              options={files.map(f => ({ value: f.id, label: f.name }))}
+              onChange={(val) => updateConfig({ baseFile: val })}
+            />
+
+            <CustomSelect
+              label="Common Join Key"
+              value={config.commonKey}
+              options={commonColumns.map(c => ({ value: c, label: c }))}
+              onChange={(val) => updateConfig({ commonKey: val })}
+              placeholder="Select shared field..."
+            />
+
+            <div className="space-y-3">
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">Strategy</label>
+              <div className="relative">
+                 <select 
+                   value={config.type}
+                   onChange={(e) => updateConfig({ type: e.target.value })}
+                   className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:ring-2 focus:ring-blue-500/50 transition-all appearance-none cursor-pointer"
+                 >
+                   <option value="inner" className="bg-[#1a1c1e]">Inner Join (Matches Only)</option>
+                   <option value="left" className="bg-[#1a1c1e]">Left Join (Keep All A)</option>
+                   <option value="right" className="bg-[#1a1c1e]">Right Join (Keep All B)</option>
+                   <option value="outer" className="bg-[#1a1c1e]">Full Outer Join (Keep All)</option>
+                   <option value="append" className="bg-[#1a1c1e]">Append All (Stacking)</option>
+                   <option value="left_anti" className="bg-[#1a1c1e]">Left Anti (A without B)</option>
+                   <option value="right_anti" className="bg-[#1a1c1e]">Right Anti (B without A)</option>
+                 </select>
+                 <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none opacity-40">
+                   <Settings className="w-4 h-4" />
+                 </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4 pt-4 border-t border-white/5">
+            <div className="flex items-center justify-between px-1">
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Target Datasets ({config.targetFiles.length})</label>
+              <button 
+                onClick={() => {
+                  const allOtherIds = files.filter(f => f.id !== config.baseFile).map(f => f.id);
+                  const isAllSelected = config.targetFiles.length === allOtherIds.length;
+                  updateConfig({ targetFiles: isAllSelected ? [] : allOtherIds });
+                }}
+                className="text-[10px] font-black text-blue-500 hover:text-blue-400 uppercase tracking-widest transition-colors"
+              >
+                {config.targetFiles.length === files.filter(f => f.id !== config.baseFile).length ? 'Deselect All' : 'Select All'}
+              </button>
+            </div>
+            
+            <div className="flex flex-wrap gap-2">
+              {files.filter(f => f.id !== config.baseFile).map(file => (
+                <button
+                  key={file.id}
+                  onClick={() => {
+                    const newTargets = config.targetFiles.includes(file.id) 
+                      ? config.targetFiles.filter(id => id !== file.id)
+                      : [...config.targetFiles, file.id];
+                    updateConfig({ targetFiles: newTargets });
+                  }}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-3 rounded-xl border transition-all text-xs font-bold",
+                    config.targetFiles.includes(file.id) 
+                      ? "bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-500/10" 
+                      : "bg-white/5 border-white/5 text-gray-400 hover:bg-white/10 hover:border-white/10"
+                  )}
+                >
+                  {config.targetFiles.includes(file.id) ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5 opacity-40" />}
+                  <span className="truncate max-w-[150px]">{file.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 function PipelineBuilder({
   joins, files, activeColumns, addJoinStep, removeJoinStep,
   updateJoin, addKeyPair, removeKeyPair, updateKey,
   updateTransformation, showTransforms, setShowTransforms, getFileColumns, getStepLeftColumns,
-  activeTask
+  activeTask, onShowGuide,
+  joinApproach, setJoinApproach,
+  multiJoinConfig, setMultiJoinConfig
 }) {
   return (
     <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-white">
       <div className="flex flex-col gap-8 max-w-4xl mx-auto w-full pb-24">
-        <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-black flex items-center gap-3">
-            <Settings className="w-6 h-6 text-blue-500" /> Pipeline Configuration
-          </h2>
-          <button
-            type="button"
-            onClick={addJoinStep}
-            className="glass-button bg-blue-600 text-white flex items-center gap-2 text-xs py-2 shadow-lg shadow-blue-500/20"
-          >
-            <Plus className="w-4 h-4" /> Add Join Step
-          </button>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-1">
+            <h2 className="text-2xl font-black flex items-center gap-3">
+              <Settings className="w-6 h-6 text-blue-500" /> Pipeline Configuration
+            </h2>
+            <p className="text-xs text-gray-500 font-medium tracking-wide flex items-center gap-1.5 ml-9">
+              DESIGN YOUR DATA FLOW & RELATIONSHIPS
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 p-1 bg-white/5 rounded-2xl border border-white/5 shadow-inner">
+            <button
+              onClick={() => setJoinApproach('chain')}
+              className={cn(
+                "px-6 py-2.5 rounded-xl text-xs font-black transition-all",
+                joinApproach === 'chain' 
+                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
+                  : "text-gray-500 hover:text-white"
+              )}
+            >
+              CHAIN APPROACH
+            </button>
+            <button
+              onClick={() => setJoinApproach('multi')}
+              className={cn(
+                "px-6 py-2.5 rounded-xl text-xs font-black transition-all",
+                joinApproach === 'multi' 
+                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
+                  : "text-gray-500 hover:text-white"
+              )}
+            >
+              MULTI-FILE MERGE
+            </button>
+          </div>
+
+          {joinApproach === 'chain' && (
+            <button
+              type="button"
+              onClick={addJoinStep}
+              className="glass-button bg-blue-600 text-white flex items-center gap-2 text-xs py-2 shadow-lg shadow-blue-500/20"
+            >
+              <Plus className="w-4 h-4" /> Add Join Step
+            </button>
+          )}
         </div>
 
         <div className="space-y-12">
-          {joins.map((join, index) => (
+          {joinApproach === 'chain' ? (
+            joins.map((join, index) => (
             <motion.div
               key={join.id}
               layout
@@ -637,6 +801,16 @@ function PipelineBuilder({
                   {joins.length > 1 && (
                     <button type="button" onClick={() => removeJoinStep(join.id)} className="p-3 text-gray-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-2xl transition-all">
                       <Trash2 className="w-6 h-6" />
+                    </button>
+                  )}
+                  {index === 0 && (
+                    <button 
+                      type="button" 
+                      onClick={onShowGuide}
+                      className="p-3 text-blue-500 hover:bg-blue-500/10 rounded-2xl transition-all ml-2"
+                      title="Join Explanation Guide"
+                    >
+                      <Info className="w-6 h-6" />
                     </button>
                   )}
                 </div>
@@ -685,6 +859,16 @@ function PipelineBuilder({
                         ]}
                         onChange={(val) => updateJoin(join.id, 'type', val)}
                         placeholder="Select Logic"
+                        rightElement={
+                          <button
+                            type="button"
+                            onClick={onShowGuide}
+                            className="p-2 hover:bg-blue-1000/10 rounded-lg group transition-all"
+                            title="How to choose?"
+                          >
+                            <Info className="w-4 h-4 text-blue-500/50 group-hover:text-blue-400" />
+                          </button>
+                        }
                       />
                       <div className="p-4 bg-blue-500/5 rounded-2xl border border-blue-500/10">
                         <p className="text-[10px] text-blue-400 font-bold leading-relaxed">
@@ -854,14 +1038,276 @@ function PipelineBuilder({
                 </div>
               </div>
             </motion.div>
-          ))}
+            ))
+          ) : (
+            <MultiJoinStep 
+              config={multiJoinConfig} 
+              updateConfig={(updates) => setMultiJoinConfig(prev => ({ ...prev, ...updates }))}
+              files={files}
+              getFileColumns={getFileColumns}
+              onShowGuide={onShowGuide}
+            />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function ReviewView({ previewData, metrics, saveProject, droppedResultColumns, setDroppedResultColumns, onApplyColumnDrops }) {
+function JoinGuideModal({ isOpen, onClose }) {
+  const joinTypes = [
+    {
+      id: 'inner',
+      name: 'Inner Join',
+      desc: 'Only keeps records that have matching keys in BOTH datasets.',
+      useCase: 'Finding customers who have placed at least one order.',
+      icon: <Layers className="w-6 h-6" />
+    },
+    {
+      id: 'left',
+      name: 'Left Join',
+      desc: 'Keeps all records from Dataset A, and adds matching data from B where available.',
+      useCase: 'Listing all products and their sales (even if they havent sold yet).',
+      icon: <ArrowRight className="w-6 h-6" />
+    },
+    {
+      id: 'right',
+      name: 'Right Join',
+      desc: 'Keeps all records from Dataset B, and adds matching data from A where available.',
+      useCase: 'Listing all sales agents and their corresponding branch info.',
+      icon: <ArrowRight className="w-6 h-6 rotate-180" />
+    },
+    {
+      id: 'outer',
+      name: 'Full Outer Join',
+      desc: 'Keeps everything from both datasets. Fills missing values with nulls.',
+      useCase: 'Creating a master list of all contacts from two different regional databases.',
+      icon: <Database className="w-6 h-6" />
+    },
+    {
+      id: 'left_anti',
+      name: 'Left Anti Join',
+      desc: 'Keeps only records in A that have NO match in B.',
+      useCase: 'Finding customers who have NEVER placed an order.',
+      icon: <X className="w-6 h-6" />
+    },
+    {
+      id: 'right_anti',
+      name: 'Right Anti Join',
+      desc: 'Keeps only records in B that have NO match in A.',
+      useCase: 'Finding products in inventory that have zero sales records.',
+      icon: <X className="w-6 h-6" />
+    },
+    {
+      id: 'full_anti',
+      name: 'Full Anti Join',
+      desc: 'Keeps records that are unique to either dataset (excludes all matches).',
+      useCase: 'Identifying records that exist in either system but not both.',
+      icon: <Minus className="w-6 h-6" />
+    },
+    {
+      id: 'append',
+      name: 'Append',
+      desc: 'Simply stacks rows from both datasets on top of each other.',
+      useCase: 'Combining two monthly sales reports into one continuous list.',
+      icon: <Plus className="w-6 h-6" />
+    }
+  ];
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 lg:p-12">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-black/80 backdrop-blur-xl"
+          />
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0, y: 50 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.9, opacity: 0, y: 50 }}
+            className="relative w-full max-w-5xl h-[80vh] bg-[#1a1c1e] rounded-[48px] border border-white/10 shadow-3xl overflow-hidden flex flex-col"
+          >
+            <div className="p-8 lg:p-12 border-b border-white/5 flex items-center justify-between bg-white/5">
+              <div>
+                <h2 className="text-4xl font-black text-white mb-2 italic">Data Join Guide</h2>
+                <p className="text-blue-400 text-xs font-bold uppercase tracking-[0.3em]">Mastering harmonization strategies</p>
+              </div>
+              <button
+                onClick={onClose}
+                className="p-4 bg-white/5 hover:bg-white/10 rounded-full transition-all group"
+              >
+                <X className="w-6 h-6 text-gray-500 group-hover:text-white" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-8 lg:p-12 custom-scrollbar">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {joinTypes.map((j) => (
+                  <div key={j.id} className="p-8 rounded-[32px] bg-white/5 border border-white/5 hover:border-blue-500/30 transition-all group">
+                    <div className="flex items-start gap-6 mb-6">
+                      <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-all">
+                        {j.icon}
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-white mb-1">{j.name}</h3>
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                          <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">{j.id}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-gray-300 text-sm leading-relaxed mb-6 font-medium">
+                      {j.desc}
+                    </p>
+                    <div className="pt-6 border-t border-white/5">
+                      <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Example Use Case</p>
+                      <p className="text-xs text-blue-300/70 font-bold leading-relaxed">{j.useCase}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function DateRangePicker({ value, onChange, min, max }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  const start = value?.start || "";
+  const end = value?.end || "";
+
+  const presets = [
+    { label: "Today", getRange: () => {
+      const d = new Date().toISOString().split('T')[0];
+      return { start: d, end: d };
+    }},
+    { label: "Last 7 Days", getRange: () => {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 7);
+      return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] };
+    }},
+    { label: "This Month", getRange: () => {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      return { start: start.toISOString().split('T')[0], end: now.toISOString().split('T')[0] };
+    }},
+    { label: "Custom Only", getRange: () => ({ start: "", end: "" }) }
+  ];
+
+  const handleApply = (newRange) => {
+    onChange(newRange);
+    setIsOpen(false);
+  };
+
+  const clear = (e) => {
+    e.stopPropagation();
+    onChange(null);
+    setIsOpen(false);
+  };
+
+  // Close on click outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative w-full" ref={containerRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className={cn(
+          "w-full flex items-center justify-between bg-[#1a1c1e] border rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none transition-all cursor-pointer",
+          value ? "border-blue-500 text-blue-400" : "border-white/5 text-gray-400 hover:border-white/20"
+        )}
+      >
+        <div className="flex items-center gap-2 truncate">
+          <Calendar className="w-3 h-3 shrink-0" />
+          <span className="truncate">
+            {value ? `${start || '?'} to ${end || '?'}` : "Select Range"}
+          </span>
+        </div>
+        {value && <X onClick={clear} className="w-2.5 h-2.5 hover:text-white" />}
+      </button>
+
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            className="absolute left-0 top-full mt-2 w-64 bg-[#1a1c1e] border border-white/10 rounded-2xl shadow-2xl z-[100] p-4 space-y-4"
+          >
+            <div className="space-y-2">
+              <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest px-1">Quick Suggestions</p>
+              <div className="grid grid-cols-2 gap-2">
+                {presets.map(p => (
+                  <button
+                    key={p.label}
+                    onClick={() => handleApply(p.getRange())}
+                    className="text-[10px] font-bold py-2 px-3 rounded-xl bg-white/5 border border-white/5 hover:bg-blue-500/20 hover:border-blue-500/30 text-gray-300 hover:text-blue-400 transition-all text-left"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-3 border-t border-white/5">
+              <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest px-1">Custom Auto Range</p>
+              <div className="space-y-2">
+                <div className="space-y-1">
+                  <label className="text-[8px] font-bold text-gray-600 ml-1">START DATE</label>
+                  <input
+                    type="date"
+                    min={min}
+                    max={max}
+                    value={start}
+                    onChange={(e) => onChange({ ...value, start: e.target.value })}
+                    className="w-full bg-black/40 border border-white/5 rounded-lg px-2 py-1.5 text-[10px] text-white outline-none focus:border-blue-500/50"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[8px] font-bold text-gray-600 ml-1">END DATE</label>
+                  <input
+                    type="date"
+                    min={min}
+                    max={max}
+                    value={end}
+                    onChange={(e) => onChange({ ...value, end: e.target.value })}
+                    className="w-full bg-black/40 border border-white/5 rounded-lg px-2 py-1.5 text-[10px] text-white outline-none focus:border-blue-500/50"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={() => setIsOpen(false)}
+                className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-bold mt-2 shadow-lg shadow-blue-500/20 transition-all"
+              >
+                Apply Range
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function ReviewView({ previewData, metrics, saveProject, droppedResultColumns, setDroppedResultColumns, onApplyColumnDrops, columnFilters, setColumnFilters, onClearFilters }) {
   const handleToggleColumn = (col) => {
     if (droppedResultColumns.includes(col)) {
       setDroppedResultColumns(droppedResultColumns.filter(c => c !== col));
@@ -932,11 +1378,21 @@ function ReviewView({ previewData, metrics, saveProject, droppedResultColumns, s
                 </h2>
                 <p className="text-xs text-gray-400 font-bold uppercase tracking-[0.2em] mt-2">First 50 synthesized records</p>
               </div>
-              {previewData && (
-                <div className="text-xs font-bold text-blue-400 bg-blue-500/10 px-4 py-2 rounded-full ring-1 ring-blue-500/20">
-                  Showing {visibleColumns.length} of {previewData.columns.length} columns
-                </div>
-              )}
+              <div className="flex items-center gap-4">
+                {Object.values(columnFilters).some(v => v) && (
+                  <button
+                    onClick={onClearFilters}
+                    className="text-[10px] font-black text-rose-400 hover:text-rose-300 uppercase tracking-widest flex items-center gap-2 px-4 py-2 bg-rose-500/10 rounded-full transition-all"
+                  >
+                    <X className="w-3 h-3" /> Clear Filters
+                  </button>
+                )}
+                {previewData && (
+                  <div className="text-xs font-bold text-blue-400 bg-blue-500/10 px-4 py-2 rounded-full ring-1 ring-blue-500/20">
+                    Showing {visibleColumns.length} of {previewData.columns.length} columns
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="overflow-x-auto max-h-[700px] custom-scrollbar">
@@ -950,7 +1406,37 @@ function ReviewView({ previewData, metrics, saveProject, droppedResultColumns, s
                   <thead>
                     <tr className="bg-white/5 backdrop-blur-md z-10 sticky top-0 border-b border-white/10">
                       {visibleColumns.map(col => (
-                        <th key={col} className="px-8 py-5 text-[10px] font-black text-blue-300 uppercase tracking-[0.2em] whitespace-nowrap">{col}</th>
+                        <th key={col} className="px-8 py-5 text-[10px] font-black text-blue-300 uppercase tracking-[0.2em] whitespace-nowrap">
+                          <div className="flex flex-col gap-2">
+                            <span>{col}</span>
+                            <div className="relative group/filter">
+                              {previewData.column_info && previewData.column_info[col] && previewData.column_info[col].type === 'date' ? (
+                                <DateRangePicker
+                                  value={columnFilters[col]}
+                                  min={previewData.column_info[col].min?.split('T')[0]}
+                                  max={previewData.column_info[col].max?.split('T')[0]}
+                                  onChange={(val) => setColumnFilters({ ...columnFilters, [col]: val })}
+                                />
+                              ) : (
+                                <>
+                                  <select
+                                    value={columnFilters[col] || ""}
+                                    onChange={(e) => setColumnFilters({ ...columnFilters, [col]: e.target.value })}
+                                    className="w-full bg-[#1a1c1e] border border-white/5 rounded-lg px-2 py-1.5 text-[10px] font-bold text-white focus:border-blue-500/50 outline-none transition-all appearance-none cursor-pointer"
+                                  >
+                                    <option value="">All</option>
+                                    {previewData.unique_values && previewData.unique_values[col] && previewData.unique_values[col].map(val => (
+                                      <option key={val} value={val}>{val}</option>
+                                    ))}
+                                  </select>
+                                  <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-30">
+                                    <Plus className="w-2.5 h-2.5 rotate-45" />
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </th>
                       ))}
                     </tr>
                   </thead>
@@ -1255,6 +1741,14 @@ function App() {
     }
   ]);
 
+  const [joinApproach, setJoinApproach] = useState('chain'); // 'chain' or 'multi'
+  const [multiJoinConfig, setMultiJoinConfig] = useState({
+    baseFile: '',
+    targetFiles: [],
+    commonKey: '',
+    type: 'inner'
+  });
+
   const [metrics, setMetrics] = useState(null); // Health metrics for final result
   const [showTransforms, setShowTransforms] = useState({}); // Track expanded transforms by joinId
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { id: string, name: string }
@@ -1269,6 +1763,8 @@ function App() {
   const [colDeleteConfirm, setColDeleteConfirm] = useState(null); // { name: string }
   const uploadController = useRef(null);
   const activeTaskIdRef = useRef(null);
+  const [showJoinGuide, setShowJoinGuide] = useState(false);
+
 
   useEffect(() => {
     activeTaskIdRef.current = activeTask?.id;
@@ -1349,6 +1845,8 @@ function App() {
   const [showCollections, setShowCollections] = useState(false);
   const [saveModal, setSaveModal] = useState(false);
   const [collectionName, setCollectionName] = useState("");
+  const [columnFilters, setColumnFilters] = useState({});
+  
 
   const [droppedResultColumns, setDroppedResultColumns] = useState([]); // Track dropped columns in final review
 
@@ -1361,6 +1859,29 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [error, success]);
+
+  // Handle live preview filtering
+  useEffect(() => {
+    if (currentStage === 2 && finalResultId) {
+      const delayDebounceFn = setTimeout(async () => {
+        try {
+          const params = new URLSearchParams();
+          if (Object.keys(columnFilters).length > 0) {
+            params.append('filters', JSON.stringify(columnFilters));
+          }
+          const token = localStorage.getItem('token');
+          const previewResp = await axios.get(`${API_BASE}/preview/${finalResultId}?${params.toString()}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          setPreviewData(previewResp.data);
+          setMetrics(previewResp.data.metrics);
+        } catch (err) {
+          console.error("Failed to filter preview:", err);
+        }
+      }, 500); // 500ms debounce
+      return () => clearTimeout(delayDebounceFn);
+    }
+  }, [columnFilters, finalResultId, currentStage]);
 
   useEffect(() => {
     const fetchCollections = async () => {
@@ -1707,6 +2228,7 @@ function App() {
     setError(null);
     setPreviewData(null);
     setSuccess(null);
+    setColumnFilters({}); // Reset filters on new execution
 
     try {
       let currentResultId = null;
@@ -1777,6 +2299,54 @@ function App() {
     }
   };
 
+  const executeMulti = async () => {
+    setExecuteLoading(true);
+    setError(null);
+    setPreviewData(null);
+    setSuccess(null);
+    setColumnFilters({});
+
+    try {
+      if (!multiJoinConfig.baseFile) throw new Error("Please select a Primary Base Dataset");
+      if (multiJoinConfig.targetFiles.length === 0) throw new Error("Please select at least one Target Dataset");
+      if (!multiJoinConfig.commonKey) throw new Error("Please select a Common Join Key");
+
+      const params = new URLSearchParams();
+      params.append('base_file_id', multiJoinConfig.baseFile);
+      multiJoinConfig.targetFiles.forEach(id => params.append('target_file_ids', id));
+      params.append('common_key', multiJoinConfig.commonKey);
+      params.append('join_type', multiJoinConfig.type);
+
+      const resp = await axios.post(`${API_BASE}/join/multi?${params.toString()}`);
+      const taskId = resp.data.task_id;
+
+      const stepResult = await pollTask(taskId, 'join');
+      if (!stepResult) {
+        setExecuteLoading(false);
+        return;
+      }
+
+      setMetrics({ 
+        ...stepResult.metrics, 
+        row_count: stepResult.row_count, 
+        col_count: stepResult.col_count 
+      });
+
+      setFinalResultId(stepResult.result_id);
+      setActiveColumns(stepResult.columns);
+
+      const previewResp = await axios.get(`${API_BASE}/preview/${stepResult.result_id}`);
+      setPreviewData(previewResp.data);
+      setSuccess('Multi-file merge executed successfully!');
+      setCurrentStage(2);
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message || 'Multi-merge failed');
+      setActiveTask(null);
+    } finally {
+      setExecuteLoading(false);
+    }
+  };
+
   /**
    * Heuristic: Get columns available for the "Left" side of a step.
    * If it's step 0, it's just File A.
@@ -1827,7 +2397,13 @@ function App() {
     try {
       setSuccess("Preparing your file...");
       const token = localStorage.getItem('token');
-      const downloadUrl = `${API_BASE}/download/${resultId}?filename=${encodeURIComponent(cleanName)}&token=${token}`;
+      const params = new URLSearchParams();
+      params.append('filename', cleanName);
+      params.append('token', token);
+      if (Object.keys(columnFilters).length > 0) {
+        params.append('filters', JSON.stringify(columnFilters));
+      }
+      const downloadUrl = `${API_BASE}/download/${resultId}?${params.toString()}`;
       
       const link = document.createElement('a');
       link.href = downloadUrl;
@@ -1951,6 +2527,8 @@ function App() {
           </AnimatePresence>
         </div>
 
+        <JoinGuideModal isOpen={showJoinGuide} onClose={() => setShowJoinGuide(false)} />
+
         <AnimatePresence mode="wait">
           <motion.div
             key={currentStage}
@@ -1988,6 +2566,11 @@ function App() {
                 getFileColumns={getFileColumns}
                 getStepLeftColumns={getStepLeftColumns}
                 activeTask={activeTask}
+                onShowGuide={() => setShowJoinGuide(true)}
+                joinApproach={joinApproach}
+                setJoinApproach={setJoinApproach}
+                multiJoinConfig={multiJoinConfig}
+                setMultiJoinConfig={setMultiJoinConfig}
               />
             )}
             {currentStage === 2 && (
@@ -1998,6 +2581,9 @@ function App() {
                 droppedResultColumns={droppedResultColumns}
                 setDroppedResultColumns={setDroppedResultColumns}
                 onApplyColumnDrops={handleApplyColumnDrops}
+                columnFilters={columnFilters}
+                setColumnFilters={setColumnFilters}
+                onClearFilters={() => setColumnFilters({})}
               />
             )}
           </motion.div>
@@ -2008,7 +2594,7 @@ function App() {
         currentStage={currentStage}
         setCurrentStage={setCurrentStage}
         files={files}
-        executeChain={executeChain}
+        executeChain={joinApproach === 'chain' ? executeChain : executeMulti}
         executeLoading={executeLoading}
         handleDownload={handleDownload}
         finalResultId={finalResultId}
