@@ -3,7 +3,7 @@ import asyncio
 import uuid
 import json
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Header, Response, Cookie, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional, Union
@@ -49,8 +49,8 @@ else:
     logger.warning("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set. Storage features will be disabled.")
 
 # ─── Auth Configuration ─────────────────────────────────────────────
-SECRET_KEY = os.getenv("SECRET_KEY", "dataforge_super_secret_key")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = os.getenv("ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
 def hash_password(password: str) -> str:
@@ -136,10 +136,16 @@ class JoinTransformations(BaseModel):
     cast: Optional[Dict[str, str]] = None
 
 # ─── JWT Helper ──────────────────────────────────────────────────────
-def get_current_user(authorization: Optional[str] = Header(None), token: Optional[str] = Query(None)) -> dict:
-    """Extract and validate the user payload from the Authorization header or token query param."""
+def get_current_user(
+    authorization: Optional[str] = Header(None), 
+    token: Optional[str] = Query(None), 
+    access_token: Optional[str] = Cookie(None)
+) -> dict:
+    """Extract and validate the user payload from the Authorization header, token query param, or cookie."""
     auth_token = None
-    if authorization and authorization.startswith("Bearer "):
+    if access_token:
+        auth_token = access_token
+    elif authorization and authorization.startswith("Bearer "):
         auth_token = authorization.replace("Bearer ", "")
     elif token:
         auth_token = token
@@ -660,7 +666,7 @@ async def verify_signup(data: AuthVerifySignup):
     return {"message": "Account created successfully!"}
 
 @app.post("/auth/login")
-async def login(data: AuthLoginRequest):
+async def login(data: AuthLoginRequest, response: Response):
     async with pg_pool.acquire() as conn:
         user = await conn.fetchrow(
             "SELECT email, full_name, hashed_password, role FROM users WHERE email = $1",
@@ -683,11 +689,34 @@ async def login(data: AuthLoginRequest):
 
     await log_activity(user["email"], "login")
 
+    # Set HttpOnly cookie
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        samesite="lax",
+        secure=False, # Set to True in production with HTTPS
+    )
+
     return {
         "access_token": token,
         "token_type": "bearer",
         "user": {"email": user["email"], "name": user["full_name"], "role": user.get("role", "EMPLOYEE")},
     }
+
+@app.post("/auth/logout")
+async def logout(response: Response, user_payload: dict = Depends(get_current_user)):
+    response.delete_cookie(key="access_token")
+    if isinstance(user_payload, dict):
+        await log_activity(user_payload.get("email", "unknown"), "logout")
+    return {"message": "Logged out successfully"}
+
+@app.get("/auth/me")
+async def get_me(user_payload: dict = Depends(get_current_user)):
+    """Simple endpoint to verify the current user based on the session cookie."""
+    return {"user": user_payload}
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Admin / RBAC Endpoints (Superadmin Only)
@@ -1319,9 +1348,9 @@ async def cancel_task(task_id: str):
 async def download_collection_result(
     name: str, 
     authorization: Optional[str] = Header(None),
-    token: Optional[str] = Query(None)
+    access_token: Optional[str] = Cookie(None)
 ):
-    owner_payload = get_current_user(authorization, token)
+    owner_payload = get_current_user(authorization=authorization, access_token=access_token)
     owner = owner_payload["email"]
     async with pg_pool.acquire() as conn:
         row = await conn.fetchrow(

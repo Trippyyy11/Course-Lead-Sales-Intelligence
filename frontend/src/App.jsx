@@ -20,14 +20,8 @@ function cn(...inputs) {
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
-// Add a request interceptor to dynamically attach the token
-axios.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
+// Configure axios to send cookies with every request
+axios.defaults.withCredentials = true;
 
 /** Custom Select Component for Premium UI */
 /** Visual Representation of Join Types */
@@ -542,8 +536,7 @@ function SourcesView({ files, handleFileUpload, uploadLoading, uploadProgress, h
                   <FileActions 
                     onDelete={() => setDeleteConfirm(f)}
                     onDownload={() => {
-                      const token = localStorage.getItem('token');
-                      window.open(`${API_BASE}/files/download/${f.id}?token=${token}`, '_blank');
+                      window.open(`${API_BASE}/files/download/${f.id}`, '_blank');
                     }}
                   />
                 </motion.div>
@@ -2187,12 +2180,15 @@ function App() {
   }, [activeTask]);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      const storedUser = JSON.parse(localStorage.getItem('user'));
-      setUser(storedUser);
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-    }
+    const checkAuth = async () => {
+      try {
+        const resp = await axios.get(`${API_BASE}/auth/me`);
+        setUser(resp.data.user);
+      } catch (err) {
+        // Not authenticated
+      }
+    };
+    checkAuth();
   }, []);
 
   const handleAuthSubmit = async (e) => {
@@ -2206,10 +2202,7 @@ function App() {
           email: authData.email,
           password: authData.password
         });
-        const { access_token, user: userData } = resp.data;
-        localStorage.setItem('token', access_token);
-        localStorage.setItem('user', JSON.stringify(userData));
-        axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+        const { user: userData } = resp.data;
         setUser(userData);
         setSuccess(`Welcome back, ${userData.name}!`);
       } else if (authStage === 'signup') {
@@ -2232,10 +2225,12 @@ function App() {
     setLogoutConfirm(true);
   };
 
-  const confirmLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    delete axios.defaults.headers.common['Authorization'];
+  const confirmLogout = async () => {
+    try {
+      await axios.post(`${API_BASE}/auth/logout`);
+    } catch (err) {
+      console.error("Logout error", err);
+    }
     setUser(null);
     setLogoutConfirm(false);
     setSuccess('Logged out successfully');
@@ -2285,10 +2280,7 @@ function App() {
           if (Object.keys(columnFilters).length > 0) {
             params.append('filters', JSON.stringify(columnFilters));
           }
-          const token = localStorage.getItem('token');
-          const previewResp = await axios.get(`${API_BASE}/preview/${finalResultId}?${params.toString()}`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
+          const previewResp = await axios.get(`${API_BASE}/preview/${finalResultId}?${params.toString()}`);
           setPreviewData(previewResp.data);
           setMetrics(previewResp.data.metrics);
         } catch (err) {
@@ -2393,9 +2385,7 @@ function App() {
     setActiveTask({ id: 'drop_cols', type: 'system', progress: 50, message: 'Updating Columns...' });
     
     try {
-      const token = localStorage.getItem('token');
       const resp = await axios.delete(`${API_BASE}/result/${finalResultId}/columns`, {
-        headers: { Authorization: `Bearer ${token}` },
         data: { columns: droppedResultColumns }
       });
       
@@ -2812,10 +2802,8 @@ function App() {
     
     try {
       setSuccess("Preparing your file...");
-      const token = localStorage.getItem('token');
       const params = new URLSearchParams();
       params.append('filename', cleanName);
-      params.append('token', token);
       if (Object.keys(columnFilters).length > 0) {
         params.append('filters', JSON.stringify(columnFilters));
       }
@@ -3086,8 +3074,7 @@ function App() {
                             onDelete={() => setColDeleteConfirm(col)}
                             onDownload={() => {
                               if (col.has_result) {
-                                const token = localStorage.getItem('token');
-                                window.open(`${API_BASE}/collections/download/${encodeURIComponent(col.name)}?token=${token}`, '_blank');
+                                window.open(`${API_BASE}/collections/download/${encodeURIComponent(col.name)}`, '_blank');
                               }
                             }}
                           />
