@@ -7,7 +7,8 @@ import {
   AlertCircle, CheckCircle2, Plus, Trash2,
   ArrowRight, Layers, Sparkles, Database, X,
   Shredder, User, Mail, Lock, ShieldCheck, LogOut, KeyRound,
-  MoreVertical, Share2, Info, Minus, Calendar, Zap, Check, RefreshCw
+  MoreVertical, Share2, Info, Minus, Calendar, Zap, Check, RefreshCw,
+  Folder, ShieldAlert
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -284,9 +285,9 @@ function FileActions({ onDownload, onDelete }) {
 }
 
 const STAGES = [
-  { id: 0, name: 'Data Sources', icon: Database },
-  { id: 1, name: 'Mapping Logic', icon: Settings },
-  { id: 2, name: 'Data Review', icon: Table }
+  { id: 0, name: 'Data Sources', icon: Database, desc: 'Import and manage datasets' },
+  { id: 1, name: 'Mapping Logic', icon: Settings, desc: 'Define relations and rules' },
+  { id: 2, name: 'Data Review', icon: Table, desc: 'Validate synthesized output' }
 ];
 
 function GlobalProgress({ activeTask, onCancel }) {
@@ -389,7 +390,8 @@ function DownloadModal({ isOpen, onClose, onConfirm, filename, setFilename }) {
 
 function Stepper({ currentStage, setCurrentStage, files }) {
   return (
-    <div className="flex items-center gap-1 p-1 bg-white/[0.03] rounded-full border border-white/5">
+    <div className="flex flex-col gap-2 relative">
+      <div className="absolute left-[23px] top-6 bottom-6 w-px bg-white/5 -z-10" />
       {STAGES.map((s, i) => {
         const isActive = currentStage === s.id;
         const isDisabled = files.length < 2 && s.id > 0;
@@ -401,20 +403,29 @@ function Stepper({ currentStage, setCurrentStage, files }) {
             onClick={() => !isDisabled || s.id === 0 ? setCurrentStage(s.id) : null}
             disabled={isDisabled}
             className={cn(
-              "flex items-center gap-2.5 px-5 py-2.5 rounded-full transition-all duration-300 relative",
-              isActive 
-                ? "nav-pill-active-sleek" 
-                : "text-gray-500 hover:text-gray-300 hover:bg-white/5",
+              "flex items-center gap-4 px-3 py-3 rounded-2xl transition-all duration-500 relative text-left group",
+              isActive ? "text-white" : "text-gray-500 hover:text-white hover:translate-x-2",
               isDisabled && "opacity-20 cursor-not-allowed"
             )}
           >
-            <s.icon className={cn(
-              "w-4 h-4 transition-colors",
-              isActive ? "text-blue-400" : ""
-            )} />
-            <span className="text-[10px] font-bold uppercase tracking-widest hidden lg:block">
-              {s.name}
-            </span>
+            {isActive && (
+              <motion.div
+                layoutId="stepper-active"
+                className="absolute inset-0 bg-blue-500/10 rounded-2xl ring-1 ring-blue-500/50 shadow-xl z-0"
+                transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+              />
+            )}
+            <div className={cn("w-12 h-12 rounded-full flex justify-center items-center shrink-0 shadow-lg transition-all duration-500 relative z-10", isActive ? "bg-blue-500 text-white shadow-blue-500/30 ring-2 ring-[rgba(59,130,246,0.5)]" : "bg-[#111] text-gray-500 ring-1 ring-white/10 group-hover:ring-white/20 group-hover:bg-[#1a1a1a] group-hover:shadow-[0_0_20px_rgba(255,255,255,0.05)]")}>
+              <s.icon className="w-5 h-5 relative z-10" />
+            </div>
+            <div className="flex-1 min-w-0 relative z-10">
+               <span className={cn("text-[11px] font-black uppercase tracking-widest block truncate transition-colors", isActive ? "text-white" : "text-gray-400 group-hover:text-white")}>
+                 {s.name}
+               </span>
+               <span className="text-[9px] text-gray-500 font-medium tracking-wide mt-1 block truncate opacity-70 group-hover:opacity-100 transition-opacity">
+                 {s.desc}
+               </span>
+            </div>
           </button>
         );
       })}
@@ -424,7 +435,7 @@ function Stepper({ currentStage, setCurrentStage, files }) {
 
 function ActionBar({ currentStage, setCurrentStage, files, executeChain, executeLoading, handleDownload, finalResultId }) {
   return (
-    <div className="fixed bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-2 p-1.5 bg-[#202124]/60 backdrop-blur-2xl border border-white/10 rounded-full z-50 shadow-[0_24px_48px_rgba(0,0,0,0.5)] scale-110">
+    <div className="fixed bottom-10 left-[calc(50%+140px)] -translate-x-1/2 flex items-center gap-2 p-1.5 bg-[#202124]/60 backdrop-blur-2xl border border-white/10 rounded-full z-50 shadow-[0_24px_48px_rgba(0,0,0,0.5)] scale-110">
       <button
         type="button"
         disabled={currentStage === 0}
@@ -730,7 +741,7 @@ function PipelineBuilder({
   multiJoinConfig, setMultiJoinConfig
 }) {
   return (
-    <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-white">
+    <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-white pt-8 lg:pt-16">
       <div className="flex flex-col gap-8 max-w-4xl mx-auto w-full pb-24">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-1">
@@ -1309,7 +1320,7 @@ function ReviewView({ previewData, metrics, saveProject, droppedResultColumns, s
   const visibleColumns = previewData ? previewData.columns.filter(c => !droppedResultColumns.includes(c)) : [];
 
   return (
-    <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-white">
+    <div className="stage-container animate-in fade-in slide-in-from-bottom-4 duration-500 text-white pt-8 lg:pt-16">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 items-start">
         <div className="lg:col-span-2 space-y-10">
           
@@ -2807,70 +2818,84 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen relative">
-      {/* Enhanced Background system is now handled purely via CSS body backgrounds for smoother transitions */}
-
-      <header className="pill-nav max-w-fit mx-auto">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-4 pl-3 pr-6 border-r border-white/5 group cursor-pointer" onClick={() => setShowAdmin(false)}>
+    <div className="min-h-screen relative flex">
+      <aside className="fixed left-0 top-0 bottom-0 w-72 bg-[#0A0A0A]/95 backdrop-blur-2xl border-r border-white/5 flex flex-col z-[100]">
+        <div className="p-6 border-b border-white/5">
+          <div className="flex items-center gap-3 group cursor-pointer" onClick={() => { setShowAdmin(false); setShowCollections(false); }}>
             <div className="w-10 h-10 bg-black rounded-full flex items-center justify-center ring-1 ring-white/10 group-hover:ring-blue-500/20 transition-all duration-500">
                <Shredder className="w-6 h-6 text-blue-500" />
             </div>
-            <span className="text-sm font-bold tracking-tight text-white hidden sm:block">DataForge</span>
-          </div>
-
-          {!showAdmin && <Stepper currentStage={currentStage} setCurrentStage={setCurrentStage} files={files} />}
-
-          <div className="flex items-center gap-6 pr-3">
-            <button 
-              onClick={() => { setShowAdmin(false); setShowCollections(true); }} 
-              className="text-[10px] font-bold uppercase tracking-widest text-gray-500 hover:text-white transition-colors"
-            >
-              Library
-            </button>
-            {(user?.role === 'SUPERADMIN' || user?.role === 'ADMIN') && (
-              <button 
-                onClick={() => setShowAdmin(!showAdmin)} 
-                className={cn(
-                  "text-[10px] font-bold uppercase tracking-widest transition-colors",
-                  showAdmin ? "text-blue-500" : "text-gray-500 hover:text-white"
-                )}
-              >
-                Admin
-              </button>
-            )}
-            <button 
-              onClick={() => setSaveModal(true)} 
-              className="btn-sleek-primary px-7 py-2.5 rounded-full text-[10px] uppercase font-bold whitespace-nowrap"
-            >
-              Save Collection
-            </button>
-            <button
-              onClick={handleLogout}
-              className="p-2 text-gray-600 hover:text-rose-500 hover:bg-rose-500/5 rounded-full transition-all"
-              title="Logout"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
+            <span className="text-xl font-bold tracking-tight text-white">DataForge</span>
           </div>
         </div>
-      </header>
 
-      <GlobalProgress activeTask={activeTask} onCancel={handleTaskCancel} />
+        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+           {!showAdmin && !showCollections && (
+             <Stepper currentStage={currentStage} setCurrentStage={setCurrentStage} files={files} />
+           )}
+           {(showAdmin || showCollections) && (
+             <button 
+               onClick={() => { setShowAdmin(false); setShowCollections(false); }}
+               className="flex items-center gap-3 px-4 py-4 rounded-2xl bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 transition-all text-[11px] font-black uppercase tracking-widest"
+             >
+               <ArrowRight className="w-4 h-4 rotate-180" /> Back to Pipeline
+             </button>
+           )}
+        </div>
 
-      <div className="pt-32 pb-16 text-center space-y-6 relative">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-blue-600/20 blur-[140px] rounded-full -z-10" />
-        <h1 className="text-3xl md:text-4xl font-black tracking-tight leading-[1.1] animate-in fade-in slide-in-from-bottom-8 duration-1000">
-          Course Lead <br />
-          <span className="gemini-text">Intelligence Pipeline</span>
-        </h1>
-        <p className="text-gray-400 text-lg md:text-xl font-medium max-w-2xl mx-auto opacity-80">
-          Join, clean, and transform your sales lead datasets <br />
-          with precision and ease.
-        </p>
-      </div>
+        <div className="p-4 border-t border-white/5 space-y-2">
+           <button 
+             onClick={() => setSaveModal(true)} 
+             className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-[11px] font-black uppercase tracking-widest text-emerald-500 hover:bg-emerald-500/10 transition-all"
+           >
+             <Download className="w-4 h-4" /> Save Collection
+           </button>
 
-      <main className="max-w-7xl mx-auto min-h-[60vh] px-6">
+           <button 
+             onClick={() => { setShowAdmin(false); setShowCollections(true); }} 
+             className={cn("w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all", showCollections ? "bg-white/10 text-white shadow-inner" : "text-gray-500 hover:text-white hover:bg-white/5")}
+           >
+             <Folder className="w-4 h-4" /> Library
+           </button>
+           
+           {(user?.role === 'SUPERADMIN' || user?.role === 'ADMIN') && (
+             <button 
+               onClick={() => { setShowCollections(false); setShowAdmin(!showAdmin); }} 
+               className={cn("w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all", showAdmin ? "bg-blue-600 shadow-lg shadow-blue-500/20 text-white" : "text-gray-500 hover:text-white hover:bg-white/5")}
+             >
+               <ShieldAlert className="w-4 h-4" /> Admin Console
+             </button>
+           )}
+           
+           <div className="pt-2 mt-2 border-t border-white/5">
+             <button
+               onClick={handleLogout}
+               className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-gray-500 hover:text-rose-500 hover:bg-rose-500/10 transition-all text-[11px] font-black uppercase tracking-widest"
+             >
+               <LogOut className="w-4 h-4" /> Sign Out
+             </button>
+           </div>
+        </div>
+      </aside>
+
+      <div className="flex-1 lg:pl-[280px] w-full relative min-h-screen flex flex-col">
+        <GlobalProgress activeTask={activeTask} onCancel={handleTaskCancel} />
+
+        {currentStage === 0 && !showAdmin && !showCollections && (
+          <div className="pt-16 pb-8 px-6 md:px-12 text-center space-y-4 relative shrink-0">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-blue-600/20 blur-[140px] rounded-full -z-10 pointer-events-none" />
+            <h1 className="text-3xl md:text-4xl font-black tracking-tight leading-[1.1] animate-in fade-in slide-in-from-bottom-8 duration-1000">
+              Course Lead <br />
+              <span className="gemini-text">Intelligence Pipeline</span>
+            </h1>
+            <p className="text-gray-400 text-sm md:text-lg font-medium max-w-xl mx-auto opacity-80">
+              Join, clean, and transform your sales lead datasets <br />
+              with precision and ease.
+            </p>
+          </div>
+        )}
+
+        <main className={cn("max-w-7xl mx-auto w-full flex-1 px-6 pb-20 relative z-10 flex flex-col", !(currentStage === 0 && !showAdmin && !showCollections) ? "pt-16 lg:pt-20" : "pt-4")}>
         {/* Toast Notifications */}
         <div className="toast-container">
           <AnimatePresence>
@@ -3291,10 +3316,11 @@ function App() {
         )}
       </AnimatePresence>
 
-      <footer className="max-w-7xl mx-auto mt-32 pb-16 border-t border-white/5 opacity-40 text-center">
-        <p className="text-[10px] font-black uppercase tracking-[0.8em] text-white/60 mb-3">Designed for Intelligence</p>
+      <footer className="max-w-7xl w-full mx-auto mt-32 pb-16 border-t border-white/5 opacity-40 text-center">
+        
         <p className="text-[9px] font-bold text-gray-500 tracking-wider">ForgeJoin Unified Pipeline Logic v3.1.0 • Next-Gen Synthesis Engine</p>
       </footer>
+      </div>
     </div>
   );
 }

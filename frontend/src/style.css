@@ -34,14 +34,14 @@ body {
   @apply bg-[#121212] border-2 border-white/10 rounded-[40px] transition-all duration-500 relative overflow-hidden;
   box-shadow: 
     0 30px 60px -12px rgba(0, 0, 0, 0.9),
-    0 0 50px -10px rgba(37, 99, 235, 0.2);
+    0 0 100px -10px rgba(37, 99, 235, 0.4);
 }
 
 .glass-card:hover {
   @apply border-blue-500/50;
   box-shadow: 
     0 40px 80px -15px rgba(0, 0, 0, 1),
-    0 0 70px -15px rgba(37, 99, 235, 0.35);
+    0 0 120px -15px rgba(37, 99, 235, 0.7);
 }
 
 .glass-subcard {
