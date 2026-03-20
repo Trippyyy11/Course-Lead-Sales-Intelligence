@@ -108,6 +108,17 @@ class AuthVerifySignup(BaseModel):
     otp: str
     password: str
     full_name: str
+    role: str = "EMPLOYEE"
+
+class UserCreateRequest(BaseModel):
+    email: str
+    password: str
+    full_name: str
+    role: str = "EMPLOYEE"
+
+class UserUpdateRequest(BaseModel):
+    full_name: str
+    role: str = "EMPLOYEE"
 
 class AuthLoginRequest(BaseModel):
     email: str
@@ -124,8 +135,8 @@ class JoinTransformations(BaseModel):
     cast: Optional[Dict[str, str]] = None
 
 # ─── JWT Helper ──────────────────────────────────────────────────────
-def get_current_user(authorization: Optional[str] = Header(None), token: Optional[str] = Query(None)) -> str:
-    """Extract and validate the user email from the Authorization header or token query param."""
+def get_current_user(authorization: Optional[str] = Header(None), token: Optional[str] = Query(None)) -> dict:
+    """Extract and validate the user payload from the Authorization header or token query param."""
     auth_token = None
     if authorization and authorization.startswith("Bearer "):
         auth_token = authorization.replace("Bearer ", "")
@@ -138,9 +149,10 @@ def get_current_user(authorization: Optional[str] = Header(None), token: Optiona
     try:
         payload = jwt.decode(auth_token, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
+        role = payload.get("role", "EMPLOYEE")
         if not email:
             raise HTTPException(status_code=401, detail="Invalid token payload.")
-        return email
+        return {"email": email, "role": role}
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
     except jwt.InvalidTokenError:
@@ -281,6 +293,36 @@ async def send_otp_email(to_email: str, otp: str):
     except Exception as e:
         logger.error(f"Failed to send email to {to_email}: {type(e).__name__}: {e}")
 
+async def log_activity(email: str, action: str, details: dict = None):
+    """Record a user action in the audit_logs table."""
+    if details is None:
+        details = {}
+    try:
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO audit_logs (user_email, action, details) VALUES ($1, $2, $3)",
+                email, action, json.dumps(details)
+            )
+            
+            # Simple suspicious activity check: 
+            # If a user does a "join" or "save" more than 20 times in 10 minutes, log a warning alert.
+            if action in ["join", "save_collection"]:
+                count = await conn.fetchval(
+                    """SELECT COUNT(*) FROM audit_logs 
+                       WHERE user_email = $1 AND action = $2 
+                       AND created_at > NOW() - INTERVAL '10 minutes'""",
+                    email, action
+                )
+                if count > 20:
+                    await conn.execute(
+                        "INSERT INTO audit_logs (user_email, action, details) VALUES ($1, $2, $3)",
+                        "SYSTEM", "SUSPICIOUS_ACTIVITY", 
+                        json.dumps({"target_user": email, "reason": f"High frequency of {action} ({count} in 10m)"})
+                    )
+                    logger.warning(f"Suspicious activity detected for {email}: {action} count is {count}")
+    except Exception as e:
+        logger.error(f"Failed to log activity for {email}: {e}")
+
 # ═══════════════════════════════════════════════════════════════════════
 #  FastAPI App
 # ═══════════════════════════════════════════════════════════════════════
@@ -402,6 +444,22 @@ async def startup():
                 UNIQUE(name, owner_email)
             );
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY,
+                user_email TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details JSONB DEFAULT '{}',
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        
+        # Migration: add role and created_by columns to users
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'EMPLOYEE'")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'System'")
+        except Exception:
+            pass
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS files (
                 id TEXT PRIMARY KEY,
@@ -590,19 +648,21 @@ async def verify_signup(data: AuthVerifySignup):
             raise HTTPException(status_code=400, detail="OTP has expired")
 
         hashed_pass = hash_password(data.password)
+        user_role = getattr(data, 'role', 'EMPLOYEE')
         await conn.execute(
-            "INSERT INTO users (email, full_name, hashed_password) VALUES ($1, $2, $3)",
-            email_lower, data.full_name, hashed_pass,
+            "INSERT INTO users (email, full_name, hashed_password, role) VALUES ($1, $2, $3, $4)",
+            email_lower, data.full_name, hashed_pass, user_role
         )
         await conn.execute("DELETE FROM otps WHERE email = $1", email_lower)
 
+    await log_activity(email_lower, "signup")
     return {"message": "Account created successfully!"}
 
 @app.post("/auth/login")
 async def login(data: AuthLoginRequest):
     async with pg_pool.acquire() as conn:
         user = await conn.fetchrow(
-            "SELECT email, full_name, hashed_password FROM users WHERE email = $1",
+            "SELECT email, full_name, hashed_password, role FROM users WHERE email = $1",
             data.email.lower(),
         )
 
@@ -615,15 +675,136 @@ async def login(data: AuthLoginRequest):
     payload = {
         "sub": user["email"],
         "name": user["full_name"],
+        "role": user.get("role", "EMPLOYEE"),
         "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     }
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
+    await log_activity(user["email"], "login")
+
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": {"email": user["email"], "name": user["full_name"]},
+        "user": {"email": user["email"], "name": user["full_name"], "role": user.get("role", "EMPLOYEE")},
     }
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Admin / RBAC Endpoints (Superadmin Only)
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.get("/admin/users")
+async def admin_get_users(authorization: Optional[str] = Header(None)):
+    user_payload = get_current_user(authorization)
+    if user_payload["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Superadmin privileges required")
+    
+    async with pg_pool.acquire() as conn:
+        # Self-join to get the full_name of the person whose email is in created_by
+        users = await conn.fetch("""
+            SELECT 
+                u1.email, 
+                u1.full_name, 
+                u1.role, 
+                COALESCE(u2.full_name, u1.created_by) as authorized_by_name, 
+                u1.created_at 
+            FROM users u1
+            LEFT JOIN users u2 ON u1.created_by = u2.email
+            ORDER BY u1.created_at DESC
+        """)
+        return {"users": [dict(u) for u in users]}
+
+@app.post("/admin/users")
+async def admin_create_user(data: UserCreateRequest, authorization: Optional[str] = Header(None)):
+    user_payload = get_current_user(authorization)
+    if user_payload["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Superadmin privileges required")
+    
+    email_lower = data.email.lower()
+    async with pg_pool.acquire() as conn:
+        existing = await conn.fetchrow("SELECT id FROM users WHERE email = $1", email_lower)
+        if existing:
+            raise HTTPException(status_code=400, detail="User already exists")
+        
+        hashed_pass = hash_password(data.password)
+        await conn.execute(
+            "INSERT INTO users (email, full_name, hashed_password, role, created_by) VALUES ($1, $2, $3, $4, $5)",
+            email_lower, data.full_name, hashed_pass, data.role, user_payload["email"]
+        )
+    
+    await log_activity(user_payload["email"], "admin_user_create", {"target": email_lower, "role": data.role})
+    return {"message": f"User {email_lower} created successfully"}
+
+@app.put("/admin/users/{email}")
+async def admin_update_user(email: str, data: UserUpdateRequest, authorization: Optional[str] = Header(None)):
+    user_payload = get_current_user(authorization)
+    if user_payload["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Superadmin privileges required")
+    
+    email_lower = email.lower()
+    async with pg_pool.acquire() as conn:
+        existing = await conn.fetchrow("SELECT id FROM users WHERE email = $1", email_lower)
+        if not existing:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        await conn.execute(
+            "UPDATE users SET full_name = $1, role = $2 WHERE email = $3",
+            data.full_name, data.role, email_lower
+        )
+    
+    await log_activity(user_payload["email"], "admin_user_update", {"target": email_lower, "new_role": data.role})
+    return {"message": f"User {email_lower} updated successfully"}
+
+@app.delete("/admin/users/{email}")
+async def admin_delete_user(email: str, authorization: Optional[str] = Header(None)):
+    user_payload = get_current_user(authorization)
+    if user_payload["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Superadmin privileges required")
+    
+    email_lower = email.lower()
+    if email_lower == user_payload["email"].lower():
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+        
+    async with pg_pool.acquire() as conn:
+        existing = await conn.fetchrow("SELECT id FROM users WHERE email = $1", email_lower)
+        if not existing:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        await conn.execute("DELETE FROM users WHERE email = $1", email_lower)
+    
+    await log_activity(user_payload["email"], "admin_user_delete", {"target": email_lower})
+    return {"message": f"User {email_lower} deleted permanently"}
+
+@app.get("/admin/audit-logs")
+async def admin_get_audit_logs(authorization: Optional[str] = Header(None)):
+    try:
+        user_payload = get_current_user(authorization)
+        if user_payload["role"] not in ["SUPERADMIN", "ADMIN"]:
+            raise HTTPException(status_code=403, detail="Administrative privileges required")
+        
+        async with pg_pool.acquire() as conn:
+            # Check if pg_pool is actually available
+            if not pg_pool:
+                logger.error("pg_pool is None in admin_get_audit_logs")
+                raise HTTPException(status_code=500, detail="Database pool not initialized")
+                
+            logs = await conn.fetch("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 500")
+            return {"logs": [dict(l) for l in logs]}
+    except Exception as e:
+        logger.error(f"Error in admin_get_audit_logs: {e}", exc_info=True)
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/admin/init-superadmin")
+async def init_superadmin(email: str, secret: str):
+    if secret != os.getenv("INIT_SECRET", "forge_setup_2024"):
+         raise HTTPException(status_code=403, detail="Invalid induction secret")
+    
+    async with pg_pool.acquire() as conn:
+        await conn.execute("UPDATE users SET role = 'SUPERADMIN' WHERE email = $1", email.lower())
+    
+    await log_activity("SYSTEM", "init_superadmin", {"target": email.lower()})
+    return {"message": f"User {email} promoted to SUPERADMIN"}
 
 # ═══════════════════════════════════════════════════════════════════════
 #  File Upload / Management  (user-scoped, persisted to disk)
@@ -641,7 +822,8 @@ async def upload_files(
     files: List[UploadFile] = File(...),
     authorization: Optional[str] = Header(None),
 ):
-    owner = get_current_user(authorization)
+    owner_payload = get_current_user(authorization)
+    owner = owner_payload["email"]
     uploaded_info = []
     
     # Ensure user upload directory exists
@@ -717,6 +899,8 @@ async def upload_files(
 
     # Save metadata to disk
     _save_file_metadata(owner)
+    
+    await log_activity(owner, "upload_files", {"count": len(uploaded_info)})
 
     return {"message": "Files uploaded successfully", "files": uploaded_info}
 
@@ -726,7 +910,8 @@ async def download_file(
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None)
 ):
-    owner = get_current_user(authorization, token)
+    owner_payload = get_current_user(authorization, token)
+    owner = owner_payload["email"]
     
     async with pg_pool.acquire() as conn:
         file_record = await conn.fetchrow(
@@ -749,11 +934,13 @@ async def download_file(
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="Physical file missing")
             
+        await log_activity(owner, "download_file", {"file_id": file_id})
         return FileResponse(file_path, filename=filename)
 
 @app.get("/files")
 async def get_files(authorization: Optional[str] = Header(None), token: Optional[str] = Query(None)):
-    owner = get_current_user(authorization, token)
+    owner_payload = get_current_user(authorization, token)
+    owner = owner_payload["email"]
     # 1. Get owned files from memory
     user_files = [
         {**info, "is_owner": True, "shared_with": []}
@@ -786,7 +973,8 @@ class ShareFileRequest(BaseModel):
 
 @app.post("/files/share")
 async def share_file(req: ShareFileRequest, authorization: Optional[str] = Header(None)):
-    owner = get_current_user(authorization)
+    owner_payload = get_current_user(authorization)
+    owner = owner_payload["email"]
     
     # Verify ownership
     skey = _scoped_key(owner, req.file_id)
@@ -808,7 +996,8 @@ async def share_file(req: ShareFileRequest, authorization: Optional[str] = Heade
 
 @app.get("/columns/{file_id}")
 async def get_columns(file_id: str, authorization: Optional[str] = Header(None)):
-    owner = get_current_user(authorization)
+    owner_payload = get_current_user(authorization)
+    owner = owner_payload["email"]
     skey = _scoped_key(owner, file_id)
     if skey in file_store:
         return {"columns": file_store[skey]["columns"]}
@@ -818,7 +1007,8 @@ async def get_columns(file_id: str, authorization: Optional[str] = Header(None))
 
 @app.delete("/file/{file_id}")
 async def delete_file(file_id: str, authorization: Optional[str] = Header(None)):
-    owner = get_current_user(authorization)
+    owner_payload = get_current_user(authorization)
+    owner = owner_payload["email"]
     skey = _scoped_key(owner, file_id)
     storage.pop(skey, None)
     file_store.pop(skey, None)
@@ -834,11 +1024,13 @@ async def delete_file(file_id: str, authorization: Optional[str] = Header(None))
         await conn.execute("DELETE FROM shared_files WHERE file_id = $1", file_id)
         await conn.execute("DELETE FROM files WHERE id = $1 AND owner_email = $2", file_id, owner)
     
+    await log_activity(owner, "delete_file", {"file_id": file_id})
     return {"message": "File deleted successfully"}
 
 @app.delete("/files/clear")
 async def clear_all_files(authorization: Optional[str] = Header(None)):
-    owner = get_current_user(authorization)
+    owner_payload = get_current_user(authorization)
+    owner = owner_payload["email"]
     
     # Clear only this user's files from memory
     keys_to_remove = [k for k, v in file_store.items() if v.get("owner") == owner]
@@ -935,7 +1127,8 @@ async def save_collection(
     background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(None),
 ):
-    owner = get_current_user(authorization)
+    owner_payload = get_current_user(authorization)
+    owner = owner_payload["email"]
     task_id = str(uuid.uuid4())
     if collection.result_id:
         skey = _scoped_key(owner, collection.result_id)
@@ -956,7 +1149,8 @@ async def save_collection(
 
 @app.get("/collections")
 async def get_collections(authorization: Optional[str] = Header(None)):
-    owner = get_current_user(authorization)
+    owner_payload = get_current_user(authorization)
+    owner = owner_payload["email"]
     async with pg_pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT name, config, (result_csv IS NOT NULL) AS has_result FROM collections WHERE owner_email = $1",
@@ -974,7 +1168,8 @@ async def get_collections(authorization: Optional[str] = Header(None)):
 
 @app.delete("/collections/{name}")
 async def delete_collection(name: str, authorization: Optional[str] = Header(None)):
-    owner = get_current_user(authorization)
+    owner_payload = get_current_user(authorization)
+    owner = owner_payload["email"]
     async with pg_pool.acquire() as conn:
         # Also delete the result file from disk
         row = await conn.fetchrow(
@@ -1001,6 +1196,8 @@ async def delete_collection(name: str, authorization: Optional[str] = Header(Non
         )
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Collection not found")
+    
+    await log_activity(owner, "delete_collection", {"name": name})
     return {"message": f"Collection '{name}' deleted successfully"}
 
 @app.delete("/tasks/{task_id}")
@@ -1022,7 +1219,8 @@ async def download_collection_result(
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None)
 ):
-    owner = get_current_user(authorization, token)
+    owner_payload = get_current_user(authorization, token)
+    owner = owner_payload["email"]
     async with pg_pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT result_csv FROM collections WHERE name = $1 AND owner_email = $2", name, owner
@@ -1049,6 +1247,7 @@ async def download_collection_result(
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Result file missing everywhere")
 
+    await log_activity(owner, "download_collection", {"name": name})
     return FileResponse(file_path, filename=f"{name}.zip", media_type="application/zip")
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1308,7 +1507,8 @@ async def join_data(
     transforms: Optional[JoinTransformations] = None,
     authorization: Optional[str] = Header(None),
 ):
-    owner = get_current_user(authorization)
+    owner_payload = get_current_user(authorization)
+    owner = owner_payload["email"]
     
     # Verify both files belong to this user
     skey_a = _scoped_key(owner, file_a_id)
@@ -1335,7 +1535,8 @@ async def join_multi_data(
     join_type: str = Query("inner"),
     authorization: Optional[str] = Header(None),
 ):
-    owner = get_current_user(authorization)
+    owner_payload = get_current_user(authorization)
+    owner = owner_payload["email"]
     
     # Verify base exists
     skey_base = _scoped_key(owner, base_file_id)
@@ -1398,7 +1599,8 @@ async def get_preview(
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None)
 ):
-    owner = get_current_user(authorization, token)
+    owner_payload = get_current_user(authorization, token)
+    owner = owner_payload["email"]
     try:
         df = load_dataframe(owner, result_id)
     except Exception:
@@ -1476,7 +1678,8 @@ async def drop_result_columns(
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None)
 ):
-    owner = get_current_user(authorization, token)
+    owner_payload = get_current_user(authorization, token)
+    owner = owner_payload["email"]
     try:
         df = load_dataframe(owner, result_id)
     except Exception:
@@ -1511,7 +1714,8 @@ async def download_result(
     token: Optional[str] = Query(None),
     filename: Optional[str] = Query(None),
 ):
-    owner = get_current_user(authorization, token)
+    owner_payload = get_current_user(authorization, token)
+    owner = owner_payload["email"]
     try:
         df = load_dataframe(owner, result_id)
     except Exception:

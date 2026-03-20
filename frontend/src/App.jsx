@@ -7,7 +7,7 @@ import {
   AlertCircle, CheckCircle2, Plus, Trash2,
   ArrowRight, Layers, Sparkles, Database, X,
   Shredder, User, Mail, Lock, ShieldCheck, LogOut, KeyRound,
-  MoreVertical, Share2, Info, Minus, Calendar, Zap, Check
+  MoreVertical, Share2, Info, Minus, Calendar, Zap, Check, RefreshCw
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -859,16 +859,6 @@ function PipelineBuilder({
                         ]}
                         onChange={(val) => updateJoin(join.id, 'type', val)}
                         placeholder="Select Logic"
-                        rightElement={
-                          <button
-                            type="button"
-                            onClick={onShowGuide}
-                            className="p-2 hover:bg-blue-1000/10 rounded-lg group transition-all"
-                            title="How to choose?"
-                          >
-                            <Info className="w-4 h-4 text-blue-500/50 group-hover:text-blue-400" />
-                          </button>
-                        }
                       />
                       <div className="p-4 bg-blue-500/5 rounded-2xl border border-blue-500/10">
                         <p className="text-[10px] text-blue-400 font-bold leading-relaxed">
@@ -1492,6 +1482,383 @@ function ReviewView({ previewData, metrics, saveProject, droppedResultColumns, s
   );
 }
 
+function AdminDashboard({ user, onClose }) {
+  const [activeTab, setActiveTab] = useState('users'); // 'users' or 'logs'
+  const [users, setUsers] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [newUser, setNewUser] = useState({ email: '', full_name: '', password: '', role: 'EMPLOYEE' });
+  const [createLoading, setCreateLoading] = useState(false);
+  const [success, setSuccess] = useState(null);
+
+  const [editingUser, setEditingUser] = useState(null);
+  const [deletingUser, setDeletingUser] = useState(null);
+  const [openMenu, setOpenMenu] = useState(null);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [uResp, lResp] = await Promise.all([
+        axios.get(`${API_BASE}/admin/users`),
+        axios.get(`${API_BASE}/admin/audit-logs`)
+      ]);
+      setUsers(uResp.data.users);
+      setLogs(lResp.data.logs);
+    } catch (err) {
+      setError(err.response?.data?.detail || "Failed to fetch admin data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    // Small delay to ensure axios headers are set if coming from a fresh refresh
+    const timer = setTimeout(() => {
+      fetchData();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => setSuccess(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (openMenu && !e.target.closest('.portal-menu-content') && !e.target.closest('.user-actions-btn')) {
+        setOpenMenu(null);
+      }
+    };
+    const handleScrollOrResize = () => setOpenMenu(null);
+
+    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, [openMenu]);
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    setCreateLoading(true);
+    try {
+      await axios.post(`${API_BASE}/admin/users`, newUser);
+      setSuccess(`User ${newUser.email} created successfully`);
+      setNewUser({ email: '', full_name: '', password: '', role: 'EMPLOYEE' });
+      fetchData();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Failed to create user");
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
+  const handleUpdateUser = async (updatedData) => {
+    setLoading(true);
+    try {
+      await axios.put(`${API_BASE}/admin/users/${editingUser.email}`, updatedData);
+      setSuccess(`User ${editingUser.email} updated successfully`);
+      setEditingUser(null);
+      fetchData();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Update failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    setLoading(true);
+    try {
+      await axios.delete(`${API_BASE}/admin/users/${deletingUser.email}`);
+      setSuccess(`User ${deletingUser.email} deleted permanently`);
+      setDeletingUser(null);
+      fetchData();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Deletion failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
+      <div className="flex items-center justify-between mb-10">
+        <div className="flex flex-col gap-2 text-left">
+           <h2 className="text-3xl font-black text-white tracking-tight">Administrative Hub</h2>
+           <p className="text-[10px] font-black text-blue-500 uppercase tracking-[0.4em]">Manage Personnel & Audit Trails</p>
+        </div>
+
+        {error && (
+          <div className="flex-1 max-w-md mx-6 px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-3 animate-in fade-in zoom-in duration-300">
+             <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+             <p className="text-[10px] font-bold text-red-400 uppercase tracking-wider">{error}</p>
+          </div>
+        )}
+
+        {success && (
+          <div className="flex-1 max-w-md mx-6 px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center gap-3 animate-in fade-in zoom-in duration-300">
+             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+             <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">{success}</p>
+          </div>
+        )}
+
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={fetchData}
+            disabled={loading}
+            className="p-3 bg-white/5 hover:bg-white/10 rounded-xl transition-all disabled:opacity-50"
+            title="Refresh Data"
+          >
+            <RefreshCw className={cn("w-4 h-4 text-gray-400", loading && "animate-spin")} />
+          </button>
+          <button 
+            onClick={onClose}
+            className="p-3 bg-white/5 hover:bg-rose-500/10 rounded-xl transition-all group"
+            title="Exit Admin"
+          >
+            <X className="w-4 h-4 text-gray-400 group-hover:text-rose-500" />
+          </button>
+          <div className="flex p-1 bg-white/5 rounded-2xl ring-1 ring-white/5">
+            <button 
+              onClick={() => setActiveTab('users')}
+              className={cn("px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", activeTab === 'users' ? "bg-white text-black" : "text-gray-500 hover:text-white")}
+            >
+              Users
+            </button>
+            <button 
+              onClick={() => setActiveTab('logs')}
+              className={cn("px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", activeTab === 'logs' ? "bg-white text-black" : "text-gray-500 hover:text-white")}
+            >
+              Audit Logs
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {activeTab === 'users' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+          <div className="lg:col-span-1">
+            <div className="glass-card p-10 ring-1 ring-white/10 shadow-3xl">
+              <h3 className="text-lg font-black text-white mb-8">Provision Employee</h3>
+              <form onSubmit={handleCreateUser} className="space-y-6">
+                <div className="space-y-2 text-left">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">Full Name</label>
+                  <input required type="text" value={newUser.full_name} onChange={e=>setNewUser({...newUser, full_name: e.target.value})} className="glass-input !rounded-2xl" placeholder="Emily Carter" />
+                </div>
+                <div className="space-y-2 text-left">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">Work Email</label>
+                  <input required type="email" value={newUser.email} onChange={e=>setNewUser({...newUser, email: e.target.value})} className="glass-input !rounded-2xl" placeholder="emily@corp.com" />
+                </div>
+                <div className="space-y-2 text-left">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">Access Key</label>
+                  <input required type="password" value={newUser.password} onChange={e=>setNewUser({...newUser, password: e.target.value})} className="glass-input !rounded-2xl" placeholder="••••••••" />
+                </div>
+                <div className="space-y-4 text-left">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">Authority Role</label>
+                  <CustomSelect
+                    value={newUser.role}
+                    onChange={(val) => setNewUser({...newUser, role: val})}
+                    options={[
+                      { value: 'EMPLOYEE', label: 'Employee' },
+                      { value: 'ADMIN', label: 'Administrator' },
+                      { value: 'SUPERADMIN', label: 'Superadmin' }
+                    ]}
+                    variant="blue"
+                  />
+                </div>
+                <button disabled={createLoading} className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-[0.3em] transition-all shadow-xl shadow-blue-500/20 active:scale-95">
+                  {createLoading ? "Processing..." : "Grant Access"}
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <div className="lg:col-span-2">
+            <div className="glass-card ring-1 ring-white/10 shadow-3xl overflow-hidden min-h-[500px]">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-white/5 border-b border-white/10">
+                    <tr>
+                      <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Identity</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Role</th>
+                      <th className="px-8 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Authorized By</th>
+                      <th className="px-8 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 text-right">Joined</th>
+                      {user?.role === 'SUPERADMIN' && <th className="px-8 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 text-right">Actions</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {users.map(u => (
+                      <tr key={u.email} className="hover:bg-white/5 transition-colors">
+                        <td className="px-8 py-6">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-500 font-black">{u.full_name[0]}</div>
+                            <div>
+                              <p className="text-sm font-bold text-white leading-none mb-1">{u.full_name}</p>
+                              <p className="text-xs text-gray-500 font-medium">{u.email}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-8 py-6 text-sm">
+                          <span className={cn(
+                            "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                            u.role === 'SUPERADMIN' ? "bg-indigo-500/20 text-indigo-400" : u.role === 'ADMIN' ? "bg-blue-500/20 text-blue-400" : "bg-white/10 text-gray-400"
+                          )}>
+                            {u.role}
+                          </span>
+                        </td>
+                        <td className="px-8 py-6">
+                           <p className="text-[11px] font-bold text-blue-400/80">{u.authorized_by_name || 'System'}</p>
+                        </td>
+                        <td className="px-8 py-6 text-right text-xs text-gray-500 font-medium">{new Date(u.created_at).toLocaleDateString()}</td>
+                        {user?.role === 'SUPERADMIN' && (
+                          <td className="px-8 py-6 text-right user-actions-btn">
+                            <button 
+                              onClick={(e) => {
+                                if (openMenu?.email === u.email) {
+                                  setOpenMenu(null);
+                                } else {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setOpenMenu({ email: u.email, user: u, rect });
+                                }
+                              }}
+                              className={cn(
+                                "p-2 rounded-xl transition-all",
+                                openMenu?.email === u.email ? "bg-white/10 text-white" : "text-gray-500 hover:text-white hover:bg-white/5"
+                              )}
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="glass-card ring-1 ring-white/10 shadow-3xl overflow-hidden min-h-[600px]">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-white/5 border-b border-white/10">
+                <tr>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Timestamp</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Origin</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Action</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 font-mono">
+                {logs.map((l, i) => (
+                  <tr key={i} className={cn("hover:bg-white/5 transition-colors", l.is_suspicious ? "bg-rose-500/[0.03]" : "")}>
+                    <td className="px-8 py-6 text-[11px] text-gray-500 font-medium">{new Date(l.created_at || l.timestamp).toLocaleString()}</td>
+                    <td className="px-8 py-6 text-sm text-blue-400 font-bold">{l.user_email}</td>
+                    <td className="px-8 py-6">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] font-black text-white uppercase tracking-wider">{l.action}</span>
+                        {l.details && <span className="text-[10px] text-gray-500 truncate max-w-xs">{JSON.stringify(l.details)}</span>}
+                      </div>
+                    </td>
+                    <td className="px-8 py-6 text-right">
+                       {l.is_suspicious ? (
+                         <span className="flex items-center gap-2 justify-end text-rose-500 font-black text-[10px] uppercase tracking-widest animate-pulse">
+                           <AlertCircle className="w-3.5 h-3.5" /> Suspicious Activity
+                         </span>
+                       ) : (
+                        <span className="text-[10px] text-emerald-500 font-black uppercase tracking-widest opacity-40">System Clear</span>
+                       )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {createPortal(
+        <AnimatePresence>
+          {openMenu && (
+            <motion.div
+              initial={{ opacity: 0, x: 10, scale: 0.95 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 10, scale: 0.95 }}
+              style={{
+                position: 'fixed',
+                top: openMenu.rect.top + openMenu.rect.height / 2,
+                left: openMenu.rect.left - 16,
+                transform: 'translate(-100%, -50%)',
+                zIndex: 9999
+              }}
+              className="w-52 glass-card backdrop-blur-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] rounded-2xl py-2 overflow-hidden ring-1 ring-white/5 portal-menu-content"
+            >
+              <div className="px-4 py-2 border-b border-white/5 mb-1">
+                <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest text-left">Account Controls</p>
+              </div>
+              <button
+                onClick={() => {
+                  setEditingUser(openMenu.user);
+                  setOpenMenu(null);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/5 transition-all text-left group"
+              >
+                <Settings className="w-3.5 h-3.5 group-hover:text-blue-400 transition-colors" />
+                Modify Account
+              </button>
+              <button
+                onClick={() => {
+                  if (openMenu.user.email !== user.email) {
+                    setDeletingUser(openMenu.user);
+                    setOpenMenu(null);
+                  }
+                }}
+                disabled={openMenu.user.email === user.email}
+                className={cn(
+                  "w-full flex items-center gap-3 px-4 py-3 text-[10px] font-black uppercase tracking-widest transition-all text-left",
+                  openMenu.user.email === user.email 
+                    ? "opacity-20 cursor-not-allowed text-gray-600" 
+                    : "text-gray-400 hover:text-rose-500 hover:bg-rose-500/10"
+                )}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Permanently
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
+
+      <AnimatePresence>
+        {editingUser && (
+          <EditUserModal 
+            user={editingUser} 
+            onClose={() => setEditingUser(null)} 
+            onConfirm={handleUpdateUser} 
+          />
+        )}
+        {deletingUser && (
+          <DeleteUserConfirmModal 
+            user={deletingUser} 
+            onClose={() => setDeletingUser(null)} 
+            onConfirm={handleDeleteUser} 
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 function AuthScreen({ stage, setStage, loading, authData, setAuthData, onSubmit, error, success }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-[#0a0a0a] relative overflow-hidden">
@@ -1764,6 +2131,7 @@ function App() {
   const uploadController = useRef(null);
   const activeTaskIdRef = useRef(null);
   const [showJoinGuide, setShowJoinGuide] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
 
 
   useEffect(() => {
@@ -2444,22 +2812,33 @@ function App() {
 
       <header className="pill-nav max-w-fit mx-auto">
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-4 pl-3 pr-6 border-r border-white/5 group cursor-pointer">
+          <div className="flex items-center gap-4 pl-3 pr-6 border-r border-white/5 group cursor-pointer" onClick={() => setShowAdmin(false)}>
             <div className="w-10 h-10 bg-black rounded-full flex items-center justify-center ring-1 ring-white/10 group-hover:ring-blue-500/20 transition-all duration-500">
                <Shredder className="w-6 h-6 text-blue-500" />
             </div>
             <span className="text-sm font-bold tracking-tight text-white hidden sm:block">DataForge</span>
           </div>
 
-          <Stepper currentStage={currentStage} setCurrentStage={setCurrentStage} files={files} />
+          {!showAdmin && <Stepper currentStage={currentStage} setCurrentStage={setCurrentStage} files={files} />}
 
           <div className="flex items-center gap-6 pr-3">
             <button 
-              onClick={() => setShowCollections(true)} 
+              onClick={() => { setShowAdmin(false); setShowCollections(true); }} 
               className="text-[10px] font-bold uppercase tracking-widest text-gray-500 hover:text-white transition-colors"
             >
               Library
             </button>
+            {(user?.role === 'SUPERADMIN' || user?.role === 'ADMIN') && (
+              <button 
+                onClick={() => setShowAdmin(!showAdmin)} 
+                className={cn(
+                  "text-[10px] font-bold uppercase tracking-widest transition-colors",
+                  showAdmin ? "text-blue-500" : "text-gray-500 hover:text-white"
+                )}
+              >
+                Admin
+              </button>
+            )}
             <button 
               onClick={() => setSaveModal(true)} 
               className="btn-sleek-primary px-7 py-2.5 rounded-full text-[10px] uppercase font-bold whitespace-nowrap"
@@ -2530,75 +2909,81 @@ function App() {
         <JoinGuideModal isOpen={showJoinGuide} onClose={() => setShowJoinGuide(false)} />
 
         <AnimatePresence mode="wait">
-          <motion.div
-            key={currentStage}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.3 }}
-          >
-            {currentStage === 0 && (
-              <SourcesView
-                files={files}
-                handleFileUpload={handleFileUpload}
-                uploadLoading={uploadLoading}
-                uploadProgress={uploadProgress}
-                handleFileDelete={handleFileDelete}
-                deleteConfirm={deleteConfirm}
-                setDeleteConfirm={setDeleteConfirm}
-                onClearAll={() => setClearConfirm(true)}
-              />
-            )}
-            {currentStage === 1 && (
-              <PipelineBuilder
-                joins={joins}
-                files={files}
-                activeColumns={activeColumns}
-                addJoinStep={addJoinStep}
-                removeJoinStep={removeJoinStep}
-                updateJoin={updateJoin}
-                addKeyPair={addKeyPair}
-                removeKeyPair={removeKeyPair}
-                updateKey={updateKey}
-                updateTransformation={updateTransformation}
-                showTransforms={showTransforms}
-                setShowTransforms={setShowTransforms}
-                getFileColumns={getFileColumns}
-                getStepLeftColumns={getStepLeftColumns}
-                activeTask={activeTask}
-                onShowGuide={() => setShowJoinGuide(true)}
-                joinApproach={joinApproach}
-                setJoinApproach={setJoinApproach}
-                multiJoinConfig={multiJoinConfig}
-                setMultiJoinConfig={setMultiJoinConfig}
-              />
-            )}
-            {currentStage === 2 && (
-              <ReviewView 
-                previewData={previewData} 
-                metrics={metrics} 
-                saveProject={saveProject}
-                droppedResultColumns={droppedResultColumns}
-                setDroppedResultColumns={setDroppedResultColumns}
-                onApplyColumnDrops={handleApplyColumnDrops}
-                columnFilters={columnFilters}
-                setColumnFilters={setColumnFilters}
-                onClearFilters={() => setColumnFilters({})}
-              />
-            )}
-          </motion.div>
+          {showAdmin ? (
+            <AdminDashboard key="admin" user={user} onClose={() => setShowAdmin(false)} />
+          ) : (
+            <motion.div
+              key={currentStage}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.3 }}
+            >
+              {currentStage === 0 && (
+                <SourcesView
+                  files={files}
+                  handleFileUpload={handleFileUpload}
+                  uploadLoading={uploadLoading}
+                  uploadProgress={uploadProgress}
+                  handleFileDelete={handleFileDelete}
+                  deleteConfirm={deleteConfirm}
+                  setDeleteConfirm={setDeleteConfirm}
+                  onClearAll={() => setClearConfirm(true)}
+                />
+              )}
+              {currentStage === 1 && (
+                <PipelineBuilder
+                  joins={joins}
+                  files={files}
+                  activeColumns={activeColumns}
+                  addJoinStep={addJoinStep}
+                  removeJoinStep={removeJoinStep}
+                  updateJoin={updateJoin}
+                  addKeyPair={addKeyPair}
+                  removeKeyPair={removeKeyPair}
+                  updateKey={updateKey}
+                  updateTransformation={updateTransformation}
+                  showTransforms={showTransforms}
+                  setShowTransforms={setShowTransforms}
+                  getFileColumns={getFileColumns}
+                  getStepLeftColumns={getStepLeftColumns}
+                  activeTask={activeTask}
+                  onShowGuide={() => setShowJoinGuide(true)}
+                  joinApproach={joinApproach}
+                  setJoinApproach={setJoinApproach}
+                  multiJoinConfig={multiJoinConfig}
+                  setMultiJoinConfig={setMultiJoinConfig}
+                />
+              )}
+              {currentStage === 2 && (
+                <ReviewView 
+                  previewData={previewData} 
+                  metrics={metrics} 
+                  saveProject={saveProject}
+                  droppedResultColumns={droppedResultColumns}
+                  setDroppedResultColumns={setDroppedResultColumns}
+                  onApplyColumnDrops={handleApplyColumnDrops}
+                  columnFilters={columnFilters}
+                  setColumnFilters={setColumnFilters}
+                  onClearFilters={() => setColumnFilters({})}
+                />
+              )}
+            </motion.div>
+          )}
         </AnimatePresence>
       </main>
 
-      <ActionBar
-        currentStage={currentStage}
-        setCurrentStage={setCurrentStage}
-        files={files}
-        executeChain={joinApproach === 'chain' ? executeChain : executeMulti}
-        executeLoading={executeLoading}
-        handleDownload={handleDownload}
-        finalResultId={finalResultId}
-      />
+      {!showAdmin && (
+        <ActionBar
+          currentStage={currentStage}
+          setCurrentStage={setCurrentStage}
+          files={files}
+          executeChain={joinApproach === 'chain' ? executeChain : executeMulti}
+          executeLoading={executeLoading}
+          handleDownload={handleDownload}
+          finalResultId={finalResultId}
+        />
+      )}
 
       {/* Collections Library Modal */}
       <AnimatePresence>
@@ -2915,3 +3300,98 @@ function App() {
 }
 
 export default App;
+
+function EditUserModal({ user, onClose, onConfirm }) {
+  const [formData, setFormData] = useState({ 
+    full_name: user.full_name, 
+    role: user.role 
+  });
+
+  return createPortal(
+    <div className="fixed inset-0 z-[210] flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-md" />
+      <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-md glass-card p-10 ring-1 ring-white/10 shadow-3xl overflow-hidden">
+        <div className="flex items-center justify-between mb-8">
+          <h3 className="text-2xl font-black text-white tracking-tight italic">Modify Account</h3>
+          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl transition-all text-gray-500 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        
+        <div className="space-y-6 text-left">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 ml-1">Full Name</label>
+            <input
+              type="text"
+              value={formData.full_name}
+              onChange={(e) => setFormData({...formData, full_name: e.target.value})}
+              className="w-full px-4 py-4 bg-white/5 border border-white/10 rounded-2xl outline-none focus:border-blue-500/50 transition-all text-sm text-white font-bold"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 ml-1">Access Role</label>
+            <div className="flex p-1 bg-black/40 rounded-2xl ring-1 ring-white/5">
+              {['SUPERADMIN', 'ADMIN', 'EMPLOYEE'].map(r => (
+                <button
+                  key={r}
+                  onClick={() => setFormData({...formData, role: r})}
+                  className={cn(
+                    "flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                    formData.role === r ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" : "text-gray-500 hover:text-white"
+                  )}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 pt-6">
+            <button onClick={onClose} className="flex-1 py-4 text-[11px] font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/5 rounded-2xl transition-all">
+              Cancel
+            </button>
+            <button
+              onClick={() => onConfirm(formData)}
+              className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-widest hover:bg-blue-500 transition-all shadow-xl shadow-blue-500/20 active:scale-[0.98]"
+            >
+              Update User
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
+function DeleteUserConfirmModal({ user, onClose, onConfirm }) {
+  return createPortal(
+    <div className="fixed inset-0 z-[210] flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-md" />
+      <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-md glass-card p-10 ring-1 ring-white/10 shadow-3xl overflow-hidden">
+        <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-8 mx-auto">
+          <Trash2 className="w-8 h-8 text-rose-500" />
+        </div>
+        
+        <div className="text-center space-y-4 mb-10">
+          <h3 className="text-2xl font-black text-white tracking-tight italic">Confirm Permanent Deletion</h3>
+          <p className="text-sm text-gray-400 font-medium leading-relaxed">
+            Are you sure you want to delete <span className="text-white font-bold">{user.email}</span>? This action is irreversible and the user will lose all access immediately.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button onClick={onClose} className="flex-1 py-4 text-[11px] font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/5 rounded-2xl transition-all">
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-4 bg-rose-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-widest hover:bg-rose-500 transition-all shadow-xl shadow-rose-500/20 active:scale-[0.98]"
+          >
+            Permanently Delete
+          </button>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
