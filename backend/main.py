@@ -17,6 +17,7 @@ import jwt
 import bcrypt
 from email.message import EmailMessage
 import asyncpg
+import aiosmtplib
 import logging
 from supabase import create_client, Client
 
@@ -742,9 +743,13 @@ async def admin_update_user(email: str, data: UserUpdateRequest, authorization: 
     
     email_lower = email.lower()
     async with pg_pool.acquire() as conn:
-        existing = await conn.fetchrow("SELECT id FROM users WHERE email = $1", email_lower)
+        existing = await conn.fetchrow("SELECT id, role FROM users WHERE email = $1", email_lower)
         if not existing:
             raise HTTPException(status_code=404, detail="User not found")
+        
+        # Block modifying another SUPERADMIN's role or details
+        if existing["role"] == "SUPERADMIN" and email_lower != user_payload["email"].lower():
+            raise HTTPException(status_code=403, detail="Cannot modify another Superadmin account")
         
         await conn.execute(
             "UPDATE users SET full_name = $1, role = $2 WHERE email = $3",
@@ -765,9 +770,13 @@ async def admin_delete_user(email: str, authorization: Optional[str] = Header(No
         raise HTTPException(status_code=400, detail="You cannot delete your own account")
         
     async with pg_pool.acquire() as conn:
-        existing = await conn.fetchrow("SELECT id FROM users WHERE email = $1", email_lower)
+        existing = await conn.fetchrow("SELECT id, role FROM users WHERE email = $1", email_lower)
         if not existing:
             raise HTTPException(status_code=404, detail="User not found")
+        
+        # Block deleting another SUPERADMIN
+        if existing["role"] == "SUPERADMIN":
+            raise HTTPException(status_code=403, detail="Cannot delete a Superadmin account")
         
         await conn.execute("DELETE FROM users WHERE email = $1", email_lower)
     
@@ -782,11 +791,8 @@ async def admin_get_audit_logs(authorization: Optional[str] = Header(None)):
             raise HTTPException(status_code=403, detail="Administrative privileges required")
         
         async with pg_pool.acquire() as conn:
-            # Check if pg_pool is actually available
             if not pg_pool:
-                logger.error("pg_pool is None in admin_get_audit_logs")
                 raise HTTPException(status_code=500, detail="Database pool not initialized")
-                
             logs = await conn.fetch("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 500")
             return {"logs": [dict(l) for l in logs]}
     except Exception as e:
@@ -794,6 +800,102 @@ async def admin_get_audit_logs(authorization: Optional[str] = Header(None)):
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/admin/audit-logs")
+async def admin_delete_audit_logs(authorization: Optional[str] = Header(None), background_tasks: BackgroundTasks = None):
+    """Email a PDF of all audit logs to the requesting admin, then purge the logs."""
+    user_payload = get_current_user(authorization)
+    if user_payload["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Superadmin privileges required")
+
+    async with pg_pool.acquire() as conn:
+        logs = await conn.fetch("SELECT user_email, action, created_at FROM audit_logs ORDER BY created_at DESC")
+        log_list = [dict(l) for l in logs]
+
+    # Generate PDF in memory using reportlab
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.units import mm
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        import io as _io
+
+        buf = _io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=15*mm, rightMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
+        styles = getSampleStyleSheet()
+        elements = []
+
+        elements.append(Paragraph("DataForge — Audit Log Report", styles["Title"]))
+        elements.append(Paragraph(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}  |  Requested by: {user_payload['email']}", styles["Normal"]))
+        elements.append(Spacer(1, 8*mm))
+
+        table_data = [["Timestamp", "User", "Action"]]
+        for log in log_list:
+            ts = log["created_at"]
+            if hasattr(ts, "strftime"):
+                ts = ts.strftime("%Y-%m-%d %H:%M:%S")
+            table_data.append([str(ts), log["user_email"], log["action"].upper()])
+
+        t = Table(table_data, colWidths=[50*mm, 80*mm, 50*mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a5f")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTSIZE", (0, 0), (-1, 0), 9),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#f5f5f5"), colors.white]),
+            ("FONTSIZE", (0, 1), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        elements.append(t)
+        doc.build(elements)
+        pdf_bytes = buf.getvalue()
+    except Exception as pdf_err:
+        logger.error(f"PDF generation failed: {pdf_err}")
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {pdf_err}")
+
+    # Email the PDF
+    async def send_pdf_email(to_email: str, pdf_data: bytes):
+        try:
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.base import MIMEBase
+            from email.mime.text import MIMEText
+            from email import encoders
+            import aiosmtplib
+
+            msg = MIMEMultipart()
+            msg["Subject"] = "DataForge — Audit Log Archive"
+            msg["From"] = SMTP_USERNAME
+            msg["To"] = to_email
+            msg.attach(MIMEText("Please find the complete audit log archive attached as a PDF. This log has now been cleared from the system.", "plain"))
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(pdf_data)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f"attachment; filename=audit_log_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf")
+            msg.attach(part)
+
+            await aiosmtplib.send(
+                msg,
+                hostname=SMTP_SERVER,
+                port=SMTP_PORT,
+                start_tls=True,
+                username=SMTP_USERNAME,
+                password=SMTP_PASSWORD,
+                timeout=15,
+            )
+            logger.info(f"Audit log PDF sent to {to_email}")
+        except Exception as e:
+            logger.error(f"Failed to email audit PDF to {to_email}: {e}")
+
+    # Send email in background, then delete logs
+    await send_pdf_email(user_payload["email"], pdf_bytes)
+
+    async with pg_pool.acquire() as conn:
+        await conn.execute("DELETE FROM audit_logs")
+
+    await log_activity(user_payload["email"], "audit_logs_cleared", {})
+    return {"message": f"Audit logs archived to {user_payload['email']} and cleared successfully"}
 
 @app.post("/admin/init-superadmin")
 async def init_superadmin(email: str, secret: str):

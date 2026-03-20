@@ -1506,6 +1506,8 @@ function AdminDashboard({ user, onClose }) {
   const [editingUser, setEditingUser] = useState(null);
   const [deletingUser, setDeletingUser] = useState(null);
   const [openMenu, setOpenMenu] = useState(null);
+  const [clearLogsLoading, setClearLogsLoading] = useState(false);
+  const [confirmClearLogs, setConfirmClearLogs] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -1596,6 +1598,20 @@ function AdminDashboard({ user, onClose }) {
       setError(err.response?.data?.detail || "Deletion failed");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleClearLogs = async () => {
+    setClearLogsLoading(true);
+    setConfirmClearLogs(false);
+    try {
+      const resp = await axios.delete(`${API_BASE}/admin/audit-logs`);
+      setSuccess(resp.data.message || "Logs archived and cleared");
+      fetchData();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Failed to clear logs");
+    } finally {
+      setClearLogsLoading(false);
     }
   };
 
@@ -1731,22 +1747,25 @@ function AdminDashboard({ user, onClose }) {
                         <td className="px-8 py-6 text-right text-xs text-gray-500 font-medium">{new Date(u.created_at).toLocaleDateString()}</td>
                         {user?.role === 'SUPERADMIN' && (
                           <td className="px-8 py-6 text-right user-actions-btn">
-                            <button 
-                              onClick={(e) => {
-                                if (openMenu?.email === u.email) {
-                                  setOpenMenu(null);
-                                } else {
-                                  const rect = e.currentTarget.getBoundingClientRect();
-                                  setOpenMenu({ email: u.email, user: u, rect });
-                                }
-                              }}
-                              className={cn(
-                                "p-2 rounded-xl transition-all",
-                                openMenu?.email === u.email ? "bg-white/10 text-white" : "text-gray-500 hover:text-white hover:bg-white/5"
-                              )}
-                            >
-                              <MoreVertical className="w-4 h-4" />
-                            </button>
+                            {/* Hide actions for other SUPERADMIN accounts */}
+                            {u.role !== 'SUPERADMIN' && (
+                              <button 
+                                onClick={(e) => {
+                                  if (openMenu?.email === u.email) {
+                                    setOpenMenu(null);
+                                  } else {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    setOpenMenu({ email: u.email, user: u, rect });
+                                  }
+                                }}
+                                className={cn(
+                                  "p-2 rounded-xl transition-all",
+                                  openMenu?.email === u.email ? "bg-white/10 text-white" : "text-gray-500 hover:text-white hover:bg-white/5"
+                                )}
+                              >
+                                <MoreVertical className="w-4 h-4" />
+                              </button>
+                            )}
                           </td>
                         )}
                       </tr>
@@ -1759,35 +1778,53 @@ function AdminDashboard({ user, onClose }) {
         </div>
       ) : (
         <div className="glass-card ring-1 ring-white/10 shadow-3xl overflow-hidden min-h-[600px]">
+          {/* Logs header with delete button */}
+          <div className="flex items-center justify-between px-8 py-5 border-b border-white/5">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{logs.length} entries</p>
+            {user?.role === 'SUPERADMIN' && (
+              confirmClearLogs ? (
+                <div className="flex items-center gap-3 animate-in fade-in zoom-in duration-200">
+                  <span className="text-[10px] text-gray-400 font-bold">PDF will be emailed to you first. Confirm?</span>
+                  <button onClick={handleClearLogs} disabled={clearLogsLoading} className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50">
+                    {clearLogsLoading ? 'Clearing...' : 'Yes, Archive & Clear'}
+                  </button>
+                  <button onClick={() => setConfirmClearLogs(false)} className="px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmClearLogs(true)}
+                  className="flex items-center gap-2 px-4 py-2 text-rose-500 hover:bg-rose-500/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-rose-500/20"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Archive & Clear Logs
+                </button>
+              )
+            )}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-white/5 border-b border-white/10">
                 <tr>
                   <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Timestamp</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Origin</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">User</th>
                   <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Action</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5 font-mono">
                 {logs.map((l, i) => (
                   <tr key={i} className={cn("hover:bg-white/5 transition-colors", l.is_suspicious ? "bg-rose-500/[0.03]" : "")}>
-                    <td className="px-8 py-6 text-[11px] text-gray-500 font-medium">{new Date(l.created_at || l.timestamp).toLocaleString()}</td>
-                    <td className="px-8 py-6 text-sm text-blue-400 font-bold">{l.user_email}</td>
-                    <td className="px-8 py-6">
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[11px] font-black text-white uppercase tracking-wider">{l.action}</span>
-                        {l.details && <span className="text-[10px] text-gray-500 truncate max-w-xs">{JSON.stringify(l.details)}</span>}
-                      </div>
-                    </td>
-                    <td className="px-8 py-6 text-right">
-                       {l.is_suspicious ? (
-                         <span className="flex items-center gap-2 justify-end text-rose-500 font-black text-[10px] uppercase tracking-widest animate-pulse">
-                           <AlertCircle className="w-3.5 h-3.5" /> Suspicious Activity
-                         </span>
-                       ) : (
-                        <span className="text-[10px] text-emerald-500 font-black uppercase tracking-widest opacity-40">System Clear</span>
-                       )}
+                    <td className="px-8 py-5 text-[11px] text-gray-500 font-medium">{new Date(l.created_at || l.timestamp).toLocaleString()}</td>
+                    <td className="px-8 py-5 text-sm text-blue-400 font-bold">{l.user_email}</td>
+                    <td className="px-8 py-5">
+                      <span className={cn("text-[11px] font-black uppercase tracking-wider", l.is_suspicious ? "text-rose-400" : "text-white")}>
+                        {l.action.replace(/_/g, ' ')}
+                      </span>
+                      {l.is_suspicious && (
+                        <span className="ml-2 inline-flex items-center gap-1 text-rose-500 text-[9px] font-black uppercase tracking-widest animate-pulse">
+                          <AlertCircle className="w-3 h-3" /> Suspicious
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
