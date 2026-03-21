@@ -422,6 +422,21 @@ async def startup():
     # Start background cleanup task
     asyncio.create_task(storage_cleanup_loop())
 
+    # Verify/Create Supabase Storage Bucket
+    if supabase:
+        try:
+            # Check if bucket exists
+            buckets = supabase.storage.list_buckets()
+            if not any(b.name == 'results' for b in buckets):
+                logger.info("Supabase: 'results' bucket not found. Creating...")
+                supabase.storage.create_bucket('results', options={"public": False})
+                logger.info("Supabase: 'results' bucket created successfully.")
+            else:
+                logger.info("Supabase: 'results' bucket verified.")
+        except Exception as e:
+            logger.error(f"Supabase: Failed to verify/create 'results' bucket: {e}")
+            logger.warning("Ensure the 'results' bucket exists in your Supabase project.")
+
     async with pg_pool.acquire() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -723,8 +738,7 @@ async def get_me(user_payload: dict = Depends(get_current_user)):
 # ═══════════════════════════════════════════════════════════════════════
 
 @app.get("/admin/users")
-async def admin_get_users(authorization: Optional[str] = Header(None)):
-    user_payload = get_current_user(authorization)
+async def admin_get_users(user_payload: dict = Depends(get_current_user)):
     if user_payload["role"] != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="Superadmin privileges required")
     
@@ -744,8 +758,7 @@ async def admin_get_users(authorization: Optional[str] = Header(None)):
         return {"users": [dict(u) for u in users]}
 
 @app.post("/admin/users")
-async def admin_create_user(data: UserCreateRequest, authorization: Optional[str] = Header(None)):
-    user_payload = get_current_user(authorization)
+async def admin_create_user(data: UserCreateRequest, user_payload: dict = Depends(get_current_user)):
     if user_payload["role"] != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="Superadmin privileges required")
     
@@ -765,8 +778,7 @@ async def admin_create_user(data: UserCreateRequest, authorization: Optional[str
     return {"message": f"User {email_lower} created successfully"}
 
 @app.put("/admin/users/{email}")
-async def admin_update_user(email: str, data: UserUpdateRequest, authorization: Optional[str] = Header(None)):
-    user_payload = get_current_user(authorization)
+async def admin_update_user(email: str, data: UserUpdateRequest, user_payload: dict = Depends(get_current_user)):
     if user_payload["role"] != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="Superadmin privileges required")
     
@@ -789,8 +801,7 @@ async def admin_update_user(email: str, data: UserUpdateRequest, authorization: 
     return {"message": f"User {email_lower} updated successfully"}
 
 @app.delete("/admin/users/{email}")
-async def admin_delete_user(email: str, authorization: Optional[str] = Header(None)):
-    user_payload = get_current_user(authorization)
+async def admin_delete_user(email: str, user_payload: dict = Depends(get_current_user)):
     if user_payload["role"] != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="Superadmin privileges required")
     
@@ -813,9 +824,8 @@ async def admin_delete_user(email: str, authorization: Optional[str] = Header(No
     return {"message": f"User {email_lower} deleted permanently"}
 
 @app.get("/admin/audit-logs")
-async def admin_get_audit_logs(authorization: Optional[str] = Header(None)):
+async def admin_get_audit_logs(user_payload: dict = Depends(get_current_user)):
     try:
-        user_payload = get_current_user(authorization)
         if user_payload["role"] not in ["SUPERADMIN", "ADMIN"]:
             raise HTTPException(status_code=403, detail="Administrative privileges required")
         
@@ -831,9 +841,7 @@ async def admin_get_audit_logs(authorization: Optional[str] = Header(None)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/admin/audit-logs")
-async def admin_delete_audit_logs(authorization: Optional[str] = Header(None), background_tasks: BackgroundTasks = None):
-    """Email a PDF of all audit logs to the requesting admin, then purge the logs."""
-    user_payload = get_current_user(authorization)
+async def admin_delete_audit_logs(user_payload: dict = Depends(get_current_user), background_tasks: BackgroundTasks = None):
     if user_payload["role"] != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="Superadmin privileges required")
 
@@ -951,9 +959,8 @@ def load_dataframe(owner: str, file_id: str) -> pd.DataFrame:
 @app.post("/upload")
 async def upload_files(
     files: List[UploadFile] = File(...),
-    authorization: Optional[str] = Header(None),
+    owner_payload: dict = Depends(get_current_user),
 ):
-    owner_payload = get_current_user(authorization)
     owner = owner_payload["email"]
     uploaded_info = []
     
@@ -1038,10 +1045,8 @@ async def upload_files(
 @app.get("/files/download/{file_id}")
 async def download_file(
     file_id: str,
-    authorization: Optional[str] = Header(None),
-    token: Optional[str] = Query(None)
+    owner_payload: dict = Depends(get_current_user)
 ):
-    owner_payload = get_current_user(authorization, token)
     owner = owner_payload["email"]
     
     async with pg_pool.acquire() as conn:
@@ -1069,8 +1074,7 @@ async def download_file(
         return FileResponse(file_path, filename=filename)
 
 @app.get("/files")
-async def get_files(authorization: Optional[str] = Header(None), token: Optional[str] = Query(None)):
-    owner_payload = get_current_user(authorization, token)
+async def get_files(owner_payload: dict = Depends(get_current_user)):
     owner = owner_payload["email"]
     # 1. Get owned files from memory
     user_files = [
@@ -1103,8 +1107,7 @@ class ShareFileRequest(BaseModel):
     target_email: str
 
 @app.post("/files/share")
-async def share_file(req: ShareFileRequest, authorization: Optional[str] = Header(None)):
-    owner_payload = get_current_user(authorization)
+async def share_file(req: ShareFileRequest, owner_payload: dict = Depends(get_current_user)):
     owner = owner_payload["email"]
     
     # Verify ownership
@@ -1126,8 +1129,7 @@ async def share_file(req: ShareFileRequest, authorization: Optional[str] = Heade
     return {"message": f"File shared with {req.target_email}"}
 
 @app.get("/columns/{file_id}")
-async def get_columns(file_id: str, authorization: Optional[str] = Header(None)):
-    owner_payload = get_current_user(authorization)
+async def get_columns(file_id: str, owner_payload: dict = Depends(get_current_user)):
     owner = owner_payload["email"]
     skey = _scoped_key(owner, file_id)
     if skey in file_store:
@@ -1137,8 +1139,7 @@ async def get_columns(file_id: str, authorization: Optional[str] = Header(None))
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.delete("/file/{file_id}")
-async def delete_file(file_id: str, authorization: Optional[str] = Header(None)):
-    owner_payload = get_current_user(authorization)
+async def delete_file(file_id: str, owner_payload: dict = Depends(get_current_user)):
     owner = owner_payload["email"]
     skey = _scoped_key(owner, file_id)
     storage.pop(skey, None)
@@ -1159,8 +1160,7 @@ async def delete_file(file_id: str, authorization: Optional[str] = Header(None))
     return {"message": "File deleted successfully"}
 
 @app.delete("/files/clear")
-async def clear_all_files(authorization: Optional[str] = Header(None)):
-    owner_payload = get_current_user(authorization)
+async def clear_all_files(owner_payload: dict = Depends(get_current_user)):
     owner = owner_payload["email"]
     
     # Clear only this user's files from memory
@@ -1256,9 +1256,8 @@ async def _perform_background_save(task_id: str, collection_name: str, config: d
 async def save_collection(
     collection: CollectionSchema,
     background_tasks: BackgroundTasks,
-    authorization: Optional[str] = Header(None),
+    owner_payload: dict = Depends(get_current_user),
 ):
-    owner_payload = get_current_user(authorization)
     owner = owner_payload["email"]
     task_id = str(uuid.uuid4())
     if collection.result_id:
@@ -1279,8 +1278,7 @@ async def save_collection(
     return {"message": "Metadata saved successfully"}
 
 @app.get("/collections")
-async def get_collections(authorization: Optional[str] = Header(None)):
-    owner_payload = get_current_user(authorization)
+async def get_collections(owner_payload: dict = Depends(get_current_user)):
     owner = owner_payload["email"]
     async with pg_pool.acquire() as conn:
         rows = await conn.fetch(
@@ -1298,8 +1296,7 @@ async def get_collections(authorization: Optional[str] = Header(None)):
 
 
 @app.delete("/collections/{name}")
-async def delete_collection(name: str, authorization: Optional[str] = Header(None)):
-    owner_payload = get_current_user(authorization)
+async def delete_collection(name: str, owner_payload: dict = Depends(get_current_user)):
     owner = owner_payload["email"]
     async with pg_pool.acquire() as conn:
         # Also delete the result file from disk
@@ -1347,10 +1344,8 @@ async def cancel_task(task_id: str):
 @app.get("/collections/download/{name}")
 async def download_collection_result(
     name: str, 
-    authorization: Optional[str] = Header(None),
-    access_token: Optional[str] = Cookie(None)
+    owner_payload: dict = Depends(get_current_user)
 ):
-    owner_payload = get_current_user(authorization=authorization, access_token=access_token)
     owner = owner_payload["email"]
     async with pg_pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -1636,9 +1631,8 @@ async def join_data(
     keys_b: Optional[List[str]] = Query(None),
     join_type: str = Query("inner"),
     transforms: Optional[JoinTransformations] = None,
-    authorization: Optional[str] = Header(None),
+    owner_payload: dict = Depends(get_current_user),
 ):
-    owner_payload = get_current_user(authorization)
     owner = owner_payload["email"]
     
     # Verify both files belong to this user
@@ -1664,9 +1658,8 @@ async def join_multi_data(
     target_file_ids: List[str] = Query(...),
     common_key: str = Query(...),
     join_type: str = Query("inner"),
-    authorization: Optional[str] = Header(None),
+    owner_payload: dict = Depends(get_current_user),
 ):
-    owner_payload = get_current_user(authorization)
     owner = owner_payload["email"]
     
     # Verify base exists
@@ -1727,10 +1720,8 @@ def apply_filters(df: pd.DataFrame, filters_data: Union[str, dict, None]) -> pd.
 async def get_preview(
     result_id: str, 
     filters: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-    token: Optional[str] = Query(None)
+    owner_payload: dict = Depends(get_current_user),
 ):
-    owner_payload = get_current_user(authorization, token)
     owner = owner_payload["email"]
     try:
         df = load_dataframe(owner, result_id)
@@ -1806,10 +1797,8 @@ class ColumnDropRequest(BaseModel):
 async def drop_result_columns(
     result_id: str, 
     req: ColumnDropRequest,
-    authorization: Optional[str] = Header(None),
-    token: Optional[str] = Query(None)
+    owner_payload: dict = Depends(get_current_user)
 ):
-    owner_payload = get_current_user(authorization, token)
     owner = owner_payload["email"]
     try:
         df = load_dataframe(owner, result_id)
@@ -1841,11 +1830,9 @@ async def drop_result_columns(
 async def download_result(
     result_id: str,
     filters: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-    token: Optional[str] = Query(None),
     filename: Optional[str] = Query(None),
+    owner_payload: dict = Depends(get_current_user)
 ):
-    owner_payload = get_current_user(authorization, token)
     owner = owner_payload["email"]
     try:
         df = load_dataframe(owner, result_id)
