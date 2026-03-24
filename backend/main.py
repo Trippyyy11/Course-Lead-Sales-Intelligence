@@ -1720,6 +1720,7 @@ def apply_filters(df: pd.DataFrame, filters_data: Union[str, dict, None]) -> pd.
 async def get_preview(
     result_id: str, 
     filters: Optional[str] = Query(None),
+    limit: int = Query(50),
     owner_payload: dict = Depends(get_current_user),
 ):
     owner = owner_payload["email"]
@@ -1737,7 +1738,7 @@ async def get_preview(
 
     # Apply ALL filters for the records preview
     filtered_df = apply_filters(df, f_dict)
-    preview_df = filtered_df.head(PREVIEW_LIMIT).fillna("")
+    preview_df = filtered_df.head(limit).fillna("")
     
     # Calculate unique values and detect types
     unique_values = {}
@@ -1797,6 +1798,7 @@ class ColumnDropRequest(BaseModel):
 async def drop_result_columns(
     result_id: str, 
     req: ColumnDropRequest,
+    limit: int = Query(50),
     owner_payload: dict = Depends(get_current_user)
 ):
     owner = owner_payload["email"]
@@ -1813,7 +1815,7 @@ async def drop_result_columns(
         storage[skey] = df  # Update in-memory store
 
     # Return updated preview and metrics
-    preview_df = df.head(PREVIEW_LIMIT).fillna("")
+    preview_df = df.head(limit).fillna("")
     return {
         "message": f"Successfully dropped {len(cols_to_drop)} columns",
         "data": preview_df.to_dict(orient="records"),
