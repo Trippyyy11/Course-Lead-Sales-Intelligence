@@ -9,3 +9,5 @@ bcrypt
 pyjwt
 aiosmtplib
 python-dotenv
+supabase
+numpy
