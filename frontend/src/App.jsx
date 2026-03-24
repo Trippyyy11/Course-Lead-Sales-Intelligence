@@ -658,27 +658,22 @@ function MultiJoinStep({ config, updateConfig, files, getFileColumns, onShowGuid
               placeholder="Select shared field..."
             />
 
-            <div className="space-y-3">
-              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 ml-1">Strategy</label>
-              <div className="relative">
-                 <select 
-                   value={config.type}
-                   onChange={(e) => updateConfig({ type: e.target.value })}
-                   className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:ring-2 focus:ring-blue-500/50 transition-all appearance-none cursor-pointer"
-                 >
-                   <option value="inner" className="bg-[#1a1c1e]">Inner Join (Matches Only)</option>
-                   <option value="left" className="bg-[#1a1c1e]">Left Join (Keep All A)</option>
-                   <option value="right" className="bg-[#1a1c1e]">Right Join (Keep All B)</option>
-                   <option value="outer" className="bg-[#1a1c1e]">Full Outer Join (Keep All)</option>
-                   <option value="append" className="bg-[#1a1c1e]">Append All (Stacking)</option>
-                   <option value="left_anti" className="bg-[#1a1c1e]">Left Anti (A without B)</option>
-                   <option value="right_anti" className="bg-[#1a1c1e]">Right Anti (B without A)</option>
-                 </select>
-                 <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none opacity-40">
-                   <Settings className="w-4 h-4" />
-                 </div>
-              </div>
-            </div>
+            <CustomSelect
+              label="Strategy"
+              variant="blue"
+              value={config.type}
+              options={[
+                { value: 'inner', label: 'Matching records only' },
+                { value: 'left', label: 'Dataset A + matching items from B' },
+                { value: 'right', label: 'Dataset B + matching items from A' },
+                { value: 'outer', label: 'Everything from both datasets' },
+                { value: 'full_anti', label: 'Everything excluding matches' },
+                { value: 'left_anti', label: 'Only in Dataset A (Unique)' },
+                { value: 'right_anti', label: 'Only in Dataset B (Unique)' },
+                { value: 'append', label: 'Stack rows from both datasets' }
+              ]}
+              onChange={(val) => updateConfig({ type: val })}
+            />
           </div>
 
           <div className="space-y-4 pt-4 border-t border-white/5">
