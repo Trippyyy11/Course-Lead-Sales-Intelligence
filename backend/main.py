@@ -1,0 +1,1924 @@
+import io
+import asyncio
+import uuid
+import json
+import pandas as pd
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Header, Response, Cookie, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from typing import List, Dict, Any, Optional, Union
+from pydantic import BaseModel
+import os
+import platform
+import time
+from datetime import datetime, timedelta, timezone
+import random
+import jwt
+import bcrypt
+from email.message import EmailMessage
+import asyncpg
+import aiosmtplib
+import logging
+from supabase import create_client, Client
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ─── Environment Configuration ────────────────────────────────────────
+from dotenv import load_dotenv
+
+# Load variables from .env file
+load_dotenv()
+
+# ─── Supabase Configuration ──────────────────────────────────────────
+SUPABASE_DB_URL = os.getenv("DATABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+if SUPABASE_DB_URL is None:
+    raise ValueError("DATABASE_URL environment variable is not set. Please ensure you have created a .env file.")
+
+pg_pool: Optional[asyncpg.Pool] = None
+supabase: Optional[Client] = None
+
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    logger.info("Supabase Storage client initialized.")
+else:
+    logger.warning("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set. Storage features will be disabled.")
+
+# ─── Auth Configuration ─────────────────────────────────────────────
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = os.getenv("ALGORITHM")
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+
+def hash_password(password: str) -> str:
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    try:
+        return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
+    except Exception as e:
+        logger.error(f"Password verification error: {e}")
+        return False
+
+# ─── SMTP Configuration ─────────────────────────────────────────────
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT") or "587")
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+
+if not SMTP_SERVER:
+    logger.warning("SMTP_SERVER not set in .env. Email features may fail.")
+
+# ─── Metrics Configuration ──────────────────────────────────────────
+JOIN_EXPLOSION_THRESHOLD = int(os.getenv("JOIN_EXPLOSION_THRESHOLD", "2000"))
+PREVIEW_LIMIT = int(os.getenv("PREVIEW_LIMIT", "50"))
+
+# ─── Storage Configuration (outside code directory) ─────────────────
+def _get_default_data_dir():
+    """Get OS-appropriate data directory for persistent storage."""
+    if platform.system() == "Windows":
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        return os.path.join(base, "DataForge")
+    else:
+        return os.path.join(os.path.expanduser("~"), ".dataforge")
+
+_DATA_DIR = _get_default_data_dir()
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(_DATA_DIR, "uploads"))
+RESULT_DIR = os.getenv("RESULT_DIR", os.path.join(_DATA_DIR, "results"))
+
+logger.info(f"Upload directory: {UPLOAD_DIR}")
+logger.info(f"Result directory: {RESULT_DIR}")
+
+STORAGE_CLEANUP_HOURS = int(os.getenv("STORAGE_CLEANUP_HOURS", "24"))
+STORAGE_CLEANUP_INTERVAL = int(os.getenv("STORAGE_CLEANUP_INTERVAL_SECONDS", "3600"))
+
+# ─── Pydantic Models ────────────────────────────────────────────────
+class AuthSignupRequest(BaseModel):
+    email: str
+    password: str
+    confirm_password: str
+    full_name: str
+
+class AuthVerifySignup(BaseModel):
+    email: str
+    otp: str
+    password: str
+    full_name: str
+    role: str = "EMPLOYEE"
+
+class UserCreateRequest(BaseModel):
+    email: str
+    password: str
+    full_name: str
+    role: str = "EMPLOYEE"
+
+class UserUpdateRequest(BaseModel):
+    full_name: str
+    role: str = "EMPLOYEE"
+    email: Optional[str] = None
+
+class AuthLoginRequest(BaseModel):
+    email: str
+    password: str
+
+class CollectionSchema(BaseModel):
+    name: str
+    config: Dict[str, Any]
+    result_id: Optional[str] = None
+
+class JoinTransformations(BaseModel):
+    drop: Optional[List[str]] = None
+    rename: Optional[Dict[str, str]] = None
+    cast: Optional[Dict[str, str]] = None
+
+# ─── JWT Helper ──────────────────────────────────────────────────────
+def get_current_user(
+    authorization: Optional[str] = Header(None), 
+    token: Optional[str] = Query(None), 
+    access_token: Optional[str] = Cookie(None)
+) -> dict:
+    """Extract and validate the user payload from the Authorization header, token query param, or cookie."""
+    auth_token = None
+    if access_token:
+        auth_token = access_token
+    elif authorization and authorization.startswith("Bearer "):
+        auth_token = authorization.replace("Bearer ", "")
+    elif token:
+        auth_token = token
+    
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="Not authenticated. Please log in.")
+    
+    try:
+        payload = jwt.decode(auth_token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+        role = payload.get("role", "EMPLOYEE")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token payload.")
+        return {"email": email, "role": role}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
+
+# ─── Scoped Storage Keys ────────────────────────────────────────────
+def _scoped_key(owner: str, file_id: str) -> str:
+    """Create a user-scoped key for in-memory stores."""
+    return f"{owner}:{file_id}"
+
+# ─── Email Helper ────────────────────────────────────────────────────
+async def send_otp_email(to_email: str, otp: str):
+    logger.info(f"Generating OTP email for {to_email}")
+    message = EmailMessage()
+    message["Subject"] = "DataForge - Your Activation Code"
+    message["From"] = SMTP_USERNAME
+    message["To"] = to_email
+
+    # Define a more robust and premium HTML template for email clients
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body {{
+                background-color: #020617;
+                color: #f8fafc;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                margin: 0;
+                padding: 0;
+            }}
+            .wrapper {{
+                background-color: #020617;
+                padding: 60px 20px;
+                text-align: center;
+            }}
+            .container {{
+                max-width: 480px;
+                margin: 0 auto;
+                background-color: #1e293b;
+                border: 1px solid #334155;
+                border-radius: 24px;
+                padding: 48px 32px;
+                text-align: center;
+            }}
+            .title {{
+                font-size: 28px;
+                font-weight: 800;
+                color: #ffffff;
+                margin: 0 0 12px 0;
+                letter-spacing: -0.02em;
+            }}
+            .subtitle {{
+                color: #94a3b8 !important;
+                font-size: 15px;
+                line-height: 1.6;
+                margin: 0 0 32px 0;
+            }}
+            .otp-box {{
+                background-color: #0f172a;
+                border: 2px solid #3b82f6;
+                border-radius: 16px;
+                padding: 24px;
+                margin: 0 auto 32px;
+                width: fit-content;
+                min-width: 200px;
+            }}
+            .otp-label {{
+                font-size: 10px;
+                font-weight: 900;
+                text-transform: uppercase;
+                letter-spacing: 0.2em;
+                color: #3b82f6;
+                margin-bottom: 8px;
+            }}
+            .otp-code {{
+                font-family: 'Monaco', 'Consolas', monospace;
+                font-size: 42px;
+                font-weight: 900;
+                letter-spacing: 0.3em;
+                color: #ffffff;
+                margin: 0;
+            }}
+            .expiry {{
+                color: #64748b;
+                font-size: 13px;
+                font-weight: 500;
+                margin: 0;
+            }}
+            .footer {{
+                color: #475569;
+                font-size: 11px;
+                margin-top: 48px;
+                padding-top: 24px;
+                border-top: 1px solid #334155;
+                line-height: 1.5;
+            }}
+        </style>
+    </head>
+    <body style="background-color: #020617; margin: 0; padding: 0;">
+        <div class="wrapper" style="background-color: #020617; padding: 60px 20px;">
+            <div class="container" style="background-color: #1e293b; border-radius: 24px; padding: 48px 32px; max-width: 480px; margin: 0 auto;">
+                <h1 class="title" style="color: #ffffff; font-size: 28px; font-weight: 800; margin: 0 0 12px 0;">Verify Your Email</h1>
+                <p class="subtitle" style="color: #94a3b8; font-size: 15px; margin: 0 0 32px 0;">Welcome to <strong>DataForge</strong>. Please use the following activation code to complete your registration.</p>
+                
+                <div class="otp-box" style="background-color: #0f172a; border: 2px solid #3b82f6; border-radius: 16px; padding: 24px; margin: 0 auto 32px;">
+                    <div class="otp-label" style="color: #3b82f6; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 8px;">Security Code</div>
+                    <div class="otp-code" style="color: #ffffff; font-size: 42px; font-weight: 900; letter-spacing: 0.3em;">{otp}</div>
+                </div>
+                
+                <p class="expiry" style="color: #64748b; font-size: 13px;">This code expires in <strong>5 minutes</strong>.</p>
+                
+                <div class="footer" style="color: #475569; font-size: 11px; margin-top: 48px; padding-top: 24px; border-top: 1px solid #334155;">
+                    <strong>ForgeJoin</strong> • Unified Pipeline Logic v3.1<br>
+                    Next-Gen Synthesis Engine • All rights reserved.
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    message.set_content(f"Your DataForge verification code is: {otp}")
+    message.add_alternative(html_content, subtype="html")
+
+    try:
+        await aiosmtplib.send(
+            message,
+            hostname=SMTP_SERVER,
+            port=SMTP_PORT,
+            start_tls=True,
+            username=SMTP_USERNAME,
+            password=SMTP_PASSWORD,
+            timeout=10,
+        )
+        logger.info(f"OTP email sent to {to_email}")
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {type(e).__name__}: {e}")
+
+async def log_activity(email: str, action: str, details: dict = None):
+    """Record a user action in the audit_logs table."""
+    if details is None:
+        details = {}
+    try:
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO audit_logs (user_email, action, details) VALUES ($1, $2, $3)",
+                email, action, json.dumps(details)
+            )
+            
+            # Simple suspicious activity check: 
+            # If a user does a "join" or "save" more than 20 times in 10 minutes, log a warning alert.
+            if action in ["join", "save_collection"]:
+                count = await conn.fetchval(
+                    """SELECT COUNT(*) FROM audit_logs 
+                       WHERE user_email = $1 AND action = $2 
+                       AND created_at > NOW() - INTERVAL '10 minutes'""",
+                    email, action
+                )
+                if count > 20:
+                    await conn.execute(
+                        "INSERT INTO audit_logs (user_email, action, details) VALUES ($1, $2, $3)",
+                        "SYSTEM", "SUSPICIOUS_ACTIVITY", 
+                        json.dumps({"target_user": email, "reason": f"High frequency of {action} ({count} in 10m)"})
+                    )
+                    logger.warning(f"Suspicious activity detected for {email}: {action} count is {count}")
+    except Exception as e:
+        logger.error(f"Failed to log activity for {email}: {e}")
+
+# ═══════════════════════════════════════════════════════════════════════
+#  FastAPI App
+# ═══════════════════════════════════════════════════════════════════════
+app = FastAPI()
+
+# Configure CORS origins from environment
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,http://localhost:8000").split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ─── In-Memory Stores (user-scoped via "owner:file_id" keys) ────────
+# file_store: {"owner:file_id": {"id", "name", "columns", "owner"}}
+file_store: Dict[str, dict] = {}
+# storage: {"owner:file_id": DataFrame}   (also holds join result DataFrames)
+storage: Dict[str, pd.DataFrame] = {}
+
+# task_store: {task_id: {"status": str, "progress": int, "result": any, "error": str}}
+task_store: Dict[str, dict] = {}
+
+# ─── Storage Cleanup Logic ──────────────────────────────────────────
+async def storage_cleanup_loop():
+    """Background task to periodically clean up old files and data."""
+    logger.info(f"Storage cleanup task started (Interval: {STORAGE_CLEANUP_INTERVAL}s, Threshold: {STORAGE_CLEANUP_HOURS}h)")
+    
+    while True:
+        try:
+            await asyncio.sleep(STORAGE_CLEANUP_INTERVAL)
+            threshold_time = time.time() - (STORAGE_CLEANUP_HOURS * 3600)
+            deleted_files = 0
+            
+            # Scan UPLOAD_DIR
+            if os.path.exists(UPLOAD_DIR):
+                for owner_dir in os.listdir(UPLOAD_DIR):
+                    owner_path = os.path.join(UPLOAD_DIR, owner_dir)
+                    if not os.path.isdir(owner_path):
+                        continue
+                        
+                    for filename in os.listdir(owner_path):
+                        if filename == "_metadata.json":
+                            continue
+                        file_path = os.path.join(owner_path, filename)
+                        if os.path.isfile(file_path) and os.path.getmtime(file_path) < threshold_time:
+                            file_id = filename.replace(".csv", "")
+                            skey = f"{owner_dir}:{file_id}"
+                            
+                            # 1. Delete from memory stores
+                            storage.pop(skey, None)
+                            file_store.pop(skey, None)
+                            
+                            # 2. Delete from disk
+                            os.remove(file_path)
+                            deleted_files += 1
+                            
+                            # 3. Delete from database
+                            if pg_pool:
+                                async with pg_pool.acquire() as conn:
+                                    await conn.execute("DELETE FROM files WHERE id = $1 AND owner_email = $2", file_id, owner_dir)
+                    
+                    # Update metadata file for user
+                    _save_file_metadata(owner_dir)
+
+            if deleted_files > 0:
+                logger.info(f"Cleanup cycle completed: deleted {deleted_files} old upload file(s).")
+                
+        except Exception as e:
+            logger.error(f"Error in storage cleanup loop: {e}")
+
+# ─── Startup / Shutdown ─────────────────────────────────────────────
+@app.on_event("startup")
+async def startup():
+    global pg_pool
+    # Create storage directories outside code directory
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    os.makedirs(RESULT_DIR, exist_ok=True)
+    
+    pg_pool = await asyncpg.create_pool(
+        SUPABASE_DB_URL,
+        min_size=2,
+        max_size=10,
+        statement_cache_size=0
+    )
+    logger.info("Connected to Supabase PostgreSQL")
+
+    # Start background cleanup task
+    asyncio.create_task(storage_cleanup_loop())
+
+    # Verify/Create Supabase Storage Bucket
+    if supabase:
+        try:
+            # Check if bucket exists
+            buckets = supabase.storage.list_buckets()
+            if not any(b.name == 'results' for b in buckets):
+                logger.info("Supabase: 'results' bucket not found. Creating...")
+                supabase.storage.create_bucket('results', options={"public": False})
+                logger.info("Supabase: 'results' bucket created successfully.")
+            else:
+                logger.info("Supabase: 'results' bucket verified.")
+        except Exception as e:
+            logger.error(f"Supabase: Failed to verify/create 'results' bucket: {e}")
+            logger.warning("Ensure the 'results' bucket exists in your Supabase project.")
+
+    async with pg_pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                full_name TEXT NOT NULL,
+                hashed_password TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS otps (
+                id SERIAL PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                otp TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS collections (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                owner_email TEXT NOT NULL DEFAULT '',
+                config JSONB NOT NULL DEFAULT '{}',
+                result_csv TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(name, owner_email)
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY,
+                user_email TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details JSONB DEFAULT '{}',
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        
+        # Migration: add role and created_by columns to users
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'EMPLOYEE'")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'System'")
+        except Exception:
+            pass
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                type TEXT NOT NULL,
+                owner_email TEXT NOT NULL DEFAULT '',
+                columns JSONB DEFAULT '[]',
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS shared_files (
+                id SERIAL PRIMARY KEY,
+                file_id TEXT NOT NULL,
+                owner_email TEXT NOT NULL,
+                shared_with_email TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(file_id, shared_with_email)
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS shared_collections (
+                id SERIAL PRIMARY KEY,
+                collection_name TEXT NOT NULL,
+                owner_email TEXT NOT NULL,
+                shared_with_email TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(collection_name, shared_with_email)
+            );
+        """)
+
+
+        # Migration: add owner_email column if it doesn't exist (for existing DBs)
+        try:
+            await conn.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS owner_email TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            await conn.execute("ALTER TABLE collections ADD COLUMN IF NOT EXISTS owner_email TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+
+        # Drop old unique constraint on collections.name if it exists, add new composite one
+        try:
+            await conn.execute("ALTER TABLE collections DROP CONSTRAINT IF EXISTS collections_name_key")
+        except Exception:
+            pass
+        try:
+            await conn.execute("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'collections_name_owner_key'
+                    ) THEN
+                        ALTER TABLE collections ADD CONSTRAINT collections_name_owner_key UNIQUE (name, owner_email);
+                    END IF;
+                END $$;
+            """)
+        except Exception:
+            pass
+
+    logger.info("Database tables ready")
+    
+    # ─── Reload persisted files from disk into memory ────────────────
+    await _reload_persisted_files()
+
+async def _reload_persisted_files():
+    """Scan UPLOAD_DIR and reload each user's files into memory."""
+    if not os.path.exists(UPLOAD_DIR):
+        return
+    
+    loaded_count = 0
+    for owner_dir in os.listdir(UPLOAD_DIR):
+        owner_path = os.path.join(UPLOAD_DIR, owner_dir)
+        if not os.path.isdir(owner_path):
+            continue
+        
+        owner_email = owner_dir  # directory name is the owner email
+        
+        # Load metadata file if it exists
+        meta_path = os.path.join(owner_path, "_metadata.json")
+        metadata = {}
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r") as f:
+                    metadata = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load metadata for {owner_email}: {e}")
+                continue
+        
+        for file_id, file_meta in metadata.items():
+            file_path = os.path.join(owner_path, f"{file_id}.csv")
+            if not os.path.exists(file_path):
+                continue
+            
+            try:
+                df = pd.read_csv(file_path, low_memory=False)
+                skey = _scoped_key(owner_email, file_id)
+                storage[skey] = df
+                file_store[skey] = {
+                    "id": file_id,
+                    "name": file_meta.get("name", f"{file_id}.csv"),
+                    "columns": df.columns.tolist(),
+                    "rows": len(df),
+                    "cols": len(df.columns),
+                    "owner": owner_email,
+                }
+                loaded_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to reload file {file_id} for {owner_email}: {e}")
+    
+    if loaded_count > 0:
+        logger.info(f"Reloaded {loaded_count} persisted file(s) from disk")
+
+def _save_file_metadata(owner_email: str):
+    """Persist file metadata for a user to disk."""
+    owner_path = os.path.join(UPLOAD_DIR, owner_email)
+    os.makedirs(owner_path, exist_ok=True)
+    
+    meta_path = os.path.join(owner_path, "_metadata.json")
+    metadata = {}
+    
+    # Gather all files for this owner
+    for skey, info in file_store.items():
+        if info.get("owner") == owner_email:
+            metadata[info["id"]] = {
+                "name": info["name"],
+            }
+    
+    with open(meta_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+@app.on_event("shutdown")
+async def shutdown():
+    global pg_pool
+    if pg_pool:
+        await pg_pool.close()
+        logger.info("PostgreSQL pool closed")
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Authentication Routes (Supabase / asyncpg)
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.post("/auth/request-otp")
+async def request_otp(data: AuthSignupRequest, background_tasks: BackgroundTasks):
+    if data.password != data.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+
+    async with pg_pool.acquire() as conn:
+        existing = await conn.fetchrow(
+            "SELECT id FROM users WHERE email = $1", data.email.lower()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="Email is already registered")
+
+        otp = str(random.randint(100000, 999999))
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+
+        await conn.execute(
+            """
+            INSERT INTO otps (email, otp, expires_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (email) DO UPDATE
+                SET otp = EXCLUDED.otp, expires_at = EXCLUDED.expires_at
+            """,
+            data.email.lower(), otp, expires_at,
+        )
+
+    background_tasks.add_task(send_otp_email, data.email.lower(), otp)
+    print(f"--- DEV OTP FOR {data.email.lower()} IS: {otp} ---")
+    return {"message": "OTP sent to your email"}
+
+@app.post("/auth/verify-signup")
+async def verify_signup(data: AuthVerifySignup):
+    email_lower = data.email.lower()
+
+    async with pg_pool.acquire() as conn:
+        otp_record = await conn.fetchrow(
+            "SELECT otp, expires_at FROM otps WHERE email = $1", email_lower
+        )
+        if not otp_record:
+            raise HTTPException(status_code=400, detail="No OTP requested for this email")
+        if otp_record["otp"] != data.otp:
+            raise HTTPException(status_code=400, detail="Invalid OTP")
+        if datetime.now(timezone.utc) > otp_record["expires_at"].replace(tzinfo=timezone.utc):
+            raise HTTPException(status_code=400, detail="OTP has expired")
+
+        hashed_pass = hash_password(data.password)
+        user_role = getattr(data, 'role', 'EMPLOYEE')
+        await conn.execute(
+            "INSERT INTO users (email, full_name, hashed_password, role) VALUES ($1, $2, $3, $4)",
+            email_lower, data.full_name, hashed_pass, user_role
+        )
+        await conn.execute("DELETE FROM otps WHERE email = $1", email_lower)
+
+    await log_activity(email_lower, "signup")
+    return {"message": "Account created successfully!"}
+
+@app.post("/auth/login")
+async def login(data: AuthLoginRequest, response: Response):
+    async with pg_pool.acquire() as conn:
+        user = await conn.fetchrow(
+            "SELECT email, full_name, hashed_password, role FROM users WHERE email = $1",
+            data.email.lower(),
+        )
+
+    if not user:
+        raise HTTPException(status_code=401, detail="No account found with this email address.")
+    
+    if not verify_password(data.password, user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Incorrect password. Please try again.")
+
+    payload = {
+        "sub": user["email"],
+        "name": user["full_name"],
+        "role": user.get("role", "EMPLOYEE"),
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    }
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+    await log_activity(user["email"], "login")
+
+    # Set HttpOnly cookie
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        samesite="lax",
+        secure=False, # Set to True in production with HTTPS
+    )
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {"email": user["email"], "name": user["full_name"], "role": user.get("role", "EMPLOYEE")},
+    }
+
+@app.post("/auth/logout")
+async def logout(response: Response, user_payload: dict = Depends(get_current_user)):
+    response.delete_cookie(key="access_token")
+    if isinstance(user_payload, dict):
+        await log_activity(user_payload.get("email", "unknown"), "logout")
+    return {"message": "Logged out successfully"}
+
+@app.get("/auth/me")
+async def get_me(user_payload: dict = Depends(get_current_user)):
+    """Simple endpoint to verify the current user based on the session cookie."""
+    return {"user": user_payload}
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Admin / RBAC Endpoints (Superadmin Only)
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.get("/admin/users")
+async def admin_get_users(user_payload: dict = Depends(get_current_user)):
+    if user_payload["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Superadmin privileges required")
+    
+    async with pg_pool.acquire() as conn:
+        # Self-join to get the full_name of the person whose email is in created_by
+        users = await conn.fetch("""
+            SELECT 
+                u1.email, 
+                u1.full_name, 
+                u1.role, 
+                COALESCE(u2.full_name, u1.created_by) as authorized_by_name, 
+                u1.created_at 
+            FROM users u1
+            LEFT JOIN users u2 ON u1.created_by = u2.email
+            ORDER BY u1.created_at DESC
+        """)
+        return {"users": [dict(u) for u in users]}
+
+@app.post("/admin/users")
+async def admin_create_user(data: UserCreateRequest, user_payload: dict = Depends(get_current_user)):
+    if user_payload["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Superadmin privileges required")
+    
+    email_lower = data.email.lower()
+    async with pg_pool.acquire() as conn:
+        existing = await conn.fetchrow("SELECT id FROM users WHERE email = $1", email_lower)
+        if existing:
+            raise HTTPException(status_code=400, detail="User already exists")
+        
+        hashed_pass = hash_password(data.password)
+        await conn.execute(
+            "INSERT INTO users (email, full_name, hashed_password, role, created_by) VALUES ($1, $2, $3, $4, $5)",
+            email_lower, data.full_name, hashed_pass, data.role, user_payload["email"]
+        )
+    
+    await log_activity(user_payload["email"], "admin_user_create", {"target": email_lower, "role": data.role})
+    return {"message": f"User {email_lower} created successfully"}
+
+@app.put("/admin/users/{email}")
+async def admin_update_user(email: str, data: UserUpdateRequest, user_payload: dict = Depends(get_current_user)):
+    if user_payload["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Superadmin privileges required")
+    
+    email_lower = email.lower()
+    async with pg_pool.acquire() as conn:
+        existing = await conn.fetchrow("SELECT id, role FROM users WHERE email = $1", email_lower)
+        if not existing:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Block modifying another SUPERADMIN's role or details
+        if existing["role"] == "SUPERADMIN" and email_lower != user_payload["email"].lower():
+            raise HTTPException(status_code=403, detail="Cannot modify another Superadmin account")
+        
+        new_email = data.email.lower() if data.email else email_lower
+        
+        async with conn.transaction():
+            if new_email != email_lower:
+                # Check if new email already exists
+                conflict = await conn.fetchrow("SELECT id FROM users WHERE email = $1", new_email)
+                if conflict:
+                    raise HTTPException(status_code=400, detail="New email is already in use by another account")
+                
+                # Update users table
+                await conn.execute("UPDATE users SET email = $1, full_name = $2, role = $3 WHERE email = $4", new_email, data.full_name, data.role, email_lower)
+                
+                # Update related tables
+                await conn.execute("UPDATE files SET owner_email = $1 WHERE owner_email = $2", new_email, email_lower)
+                await conn.execute("UPDATE collections SET owner_email = $1 WHERE owner_email = $2", new_email, email_lower)
+                await conn.execute("UPDATE audit_logs SET user_email = $1 WHERE user_email = $2", new_email, email_lower)
+                await conn.execute("UPDATE shared_files SET owner_email = $1 WHERE owner_email = $2", new_email, email_lower)
+                await conn.execute("UPDATE shared_files SET shared_with_email = $1 WHERE shared_with_email = $2", new_email, email_lower)
+                await conn.execute("UPDATE shared_collections SET owner_email = $1 WHERE owner_email = $2", new_email, email_lower)
+                await conn.execute("UPDATE shared_collections SET shared_with_email = $1 WHERE shared_with_email = $2", new_email, email_lower)
+                await conn.execute("UPDATE users SET created_by = $1 WHERE created_by = $2", new_email, email_lower)
+                
+                # Handle Physical Storage (Renaming Upload Folder)
+                old_path = os.path.join(UPLOAD_DIR, email_lower)
+                new_path = os.path.join(UPLOAD_DIR, new_email)
+                if os.path.exists(old_path):
+                    try:
+                        os.rename(old_path, new_path)
+                    except Exception as e:
+                        logger.error(f"Failed to rename storage folder from {email_lower} to {new_email}: {e}")
+                
+                # Update In-Memory Cache
+                keys_to_update = [k for k in file_store.keys() if k.startswith(f"{email_lower}:")]
+                for k in keys_to_update:
+                    file_id = k.split(":", 1)[1]
+                    new_key = f"{new_email}:{file_id}"
+                    
+                    # Update info
+                    info = file_store.pop(k)
+                    info["owner"] = new_email
+                    file_store[new_key] = info
+                    
+                    # Update storage
+                    if k in storage:
+                        storage[new_key] = storage.pop(k)
+            else:
+                await conn.execute(
+                    "UPDATE users SET full_name = $1, role = $2 WHERE email = $3",
+                    data.full_name, data.role, email_lower
+                )
+    
+    await log_activity(user_payload["email"], "admin_user_update", {"target": email_lower, "new_email": new_email, "new_role": data.role})
+    return {"message": f"User {email_lower} updated successfully"}
+
+@app.delete("/admin/users/{email}")
+async def admin_delete_user(email: str, user_payload: dict = Depends(get_current_user)):
+    if user_payload["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Superadmin privileges required")
+    
+    email_lower = email.lower()
+    if email_lower == user_payload["email"].lower():
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+        
+    async with pg_pool.acquire() as conn:
+        existing = await conn.fetchrow("SELECT id, role FROM users WHERE email = $1", email_lower)
+        if not existing:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Block deleting another SUPERADMIN
+        if existing["role"] == "SUPERADMIN":
+            raise HTTPException(status_code=403, detail="Cannot delete a Superadmin account")
+        
+        await conn.execute("DELETE FROM users WHERE email = $1", email_lower)
+    
+    await log_activity(user_payload["email"], "admin_user_delete", {"target": email_lower})
+    return {"message": f"User {email_lower} deleted permanently"}
+
+@app.get("/admin/audit-logs")
+async def admin_get_audit_logs(user_payload: dict = Depends(get_current_user)):
+    try:
+        if user_payload["role"] not in ["SUPERADMIN", "ADMIN"]:
+            raise HTTPException(status_code=403, detail="Administrative privileges required")
+        
+        async with pg_pool.acquire() as conn:
+            if not pg_pool:
+                raise HTTPException(status_code=500, detail="Database pool not initialized")
+            logs = await conn.fetch("""
+                SELECT a.*, COALESCE(u.full_name, a.user_email) as user_name
+                FROM audit_logs a
+                LEFT JOIN users u ON a.user_email = u.email
+                ORDER BY a.created_at DESC LIMIT 500
+            """)
+            return {"logs": [dict(l) for l in logs]}
+    except Exception as e:
+        logger.error(f"Error in admin_get_audit_logs: {e}", exc_info=True)
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/admin/audit-logs")
+async def admin_delete_audit_logs(user_payload: dict = Depends(get_current_user), background_tasks: BackgroundTasks = None):
+    if user_payload["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Superadmin privileges required")
+
+    async with pg_pool.acquire() as conn:
+        logs = await conn.fetch("SELECT user_email, action, created_at FROM audit_logs ORDER BY created_at DESC")
+        log_list = [dict(l) for l in logs]
+
+    # Generate PDF in memory using reportlab
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.units import mm
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        import io as _io
+
+        buf = _io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=15*mm, rightMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
+        styles = getSampleStyleSheet()
+        elements = []
+
+        elements.append(Paragraph("DataForge — Audit Log Report", styles["Title"]))
+        elements.append(Paragraph(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}  |  Requested by: {user_payload['email']}", styles["Normal"]))
+        elements.append(Spacer(1, 8*mm))
+
+        table_data = [["Timestamp", "User", "Action"]]
+        for log in log_list:
+            ts = log["created_at"]
+            if hasattr(ts, "strftime"):
+                ts = ts.strftime("%Y-%m-%d %H:%M:%S")
+            table_data.append([str(ts), log["user_email"], log["action"].upper()])
+
+        t = Table(table_data, colWidths=[50*mm, 80*mm, 50*mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a5f")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTSIZE", (0, 0), (-1, 0), 9),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#f5f5f5"), colors.white]),
+            ("FONTSIZE", (0, 1), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        elements.append(t)
+        doc.build(elements)
+        pdf_bytes = buf.getvalue()
+    except Exception as pdf_err:
+        logger.error(f"PDF generation failed: {pdf_err}")
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {pdf_err}")
+
+    # Email the PDF
+    async def send_pdf_email(to_email: str, pdf_data: bytes):
+        try:
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.base import MIMEBase
+            from email.mime.text import MIMEText
+            from email import encoders
+            import aiosmtplib
+
+            msg = MIMEMultipart()
+            msg["Subject"] = "DataForge — Audit Log Archive"
+            msg["From"] = SMTP_USERNAME
+            msg["To"] = to_email
+            msg.attach(MIMEText("Please find the complete audit log archive attached as a PDF. This log has now been cleared from the system.", "plain"))
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(pdf_data)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f"attachment; filename=audit_log_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf")
+            msg.attach(part)
+
+            await aiosmtplib.send(
+                msg,
+                hostname=SMTP_SERVER,
+                port=SMTP_PORT,
+                start_tls=True,
+                username=SMTP_USERNAME,
+                password=SMTP_PASSWORD,
+                timeout=15,
+            )
+            logger.info(f"Audit log PDF sent to {to_email}")
+        except Exception as e:
+            logger.error(f"Failed to email audit PDF to {to_email}: {e}")
+
+    # Send email in background, then delete logs
+    await send_pdf_email(user_payload["email"], pdf_bytes)
+
+    async with pg_pool.acquire() as conn:
+        await conn.execute("DELETE FROM audit_logs")
+
+    await log_activity(user_payload["email"], "audit_logs_cleared", {})
+    return {"message": f"Audit logs archived to {user_payload['email']} and cleared successfully"}
+
+@app.post("/admin/init-superadmin")
+async def init_superadmin(email: str, secret: str):
+    if secret != os.getenv("INIT_SECRET", "forge_setup_2024"):
+         raise HTTPException(status_code=403, detail="Invalid induction secret")
+    
+    async with pg_pool.acquire() as conn:
+        await conn.execute("UPDATE users SET role = 'SUPERADMIN' WHERE email = $1", email.lower())
+    
+    await log_activity("SYSTEM", "init_superadmin", {"target": email.lower()})
+    return {"message": f"User {email} promoted to SUPERADMIN"}
+
+# ═══════════════════════════════════════════════════════════════════════
+#  File Upload / Management  (user-scoped, persisted to disk)
+# ═══════════════════════════════════════════════════════════════════════
+
+def load_dataframe(owner: str, file_id: str) -> pd.DataFrame:
+    """Look up a DataFrame from the user-scoped in-memory store."""
+    skey = _scoped_key(owner, file_id)
+    if skey in storage:
+        return storage[skey]
+    raise ValueError(f"File {file_id} not found")
+
+@app.post("/upload")
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    owner_payload: dict = Depends(get_current_user),
+):
+    owner = owner_payload["email"]
+    uploaded_info = []
+    
+    # Ensure user upload directory exists
+    user_upload_dir = os.path.join(UPLOAD_DIR, owner)
+    os.makedirs(user_upload_dir, exist_ok=True)
+    
+    for file in files:
+        file_id = str(uuid.uuid4())
+
+        try:
+            content = await file.read()
+            logger.info(f"Received file: {file.filename}, size: {len(content)} bytes, owner: {owner}")
+
+            if file.filename.endswith(".csv"):
+                try:
+                    df = pd.read_csv(io.BytesIO(content), low_memory=False)
+                except UnicodeDecodeError:
+                    logger.info(f"UTF-8 decode failed for {file.filename}, falling back to latin-1")
+                    df = pd.read_csv(io.BytesIO(content), low_memory=False, encoding='latin-1')
+            elif file.filename.endswith((".xls", ".xlsx")):
+                df = pd.read_excel(io.BytesIO(content))
+            else:
+                logger.warning(f"Unsupported file format: {file.filename}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file format: {file.filename}",
+                )
+
+            if df.empty:
+                logger.warning(f"File {file.filename} is empty")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File {file.filename} is empty.",
+                )
+
+            # Store in user-scoped memory
+            skey = _scoped_key(owner, file_id)
+            storage[skey] = df
+            logger.info(f"Processed {file.filename}: {len(df)} rows, {len(df.columns)} columns")
+            info = {
+                "id": file_id,
+                "name": file.filename,
+                "columns": df.columns.tolist(),
+                "rows": len(df),
+                "cols": len(df.columns),
+                "owner": owner,
+            }
+            file_store[skey] = info
+            uploaded_info.append({k: v for k, v in info.items() if k != "owner"})
+
+            # Persist to disk for refresh recovery
+            persist_path = os.path.join(user_upload_dir, f"{file_id}.csv")
+            df.to_csv(persist_path, index=False)
+            
+            # Also persist to DB for record-keeping
+            async with pg_pool.acquire() as conn:
+                await conn.execute(
+                    """INSERT INTO files (id, name, path, type, owner_email, columns)
+                       VALUES ($1, $2, $3, $4, $5, $6)
+                       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, path=EXCLUDED.path""",
+                    file_id, file.filename, persist_path, "upload", owner,
+                    json.dumps(df.columns.tolist()),
+                )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"Error processing {file.filename}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error processing {file.filename}: {str(e)}",
+            )
+
+    # Save metadata to disk
+    _save_file_metadata(owner)
+    
+    await log_activity(owner, "upload_files", {"count": len(uploaded_info)})
+
+    return {"message": "Files uploaded successfully", "files": uploaded_info}
+
+@app.get("/files/download/{file_id}")
+async def download_file(
+    file_id: str,
+    owner_payload: dict = Depends(get_current_user)
+):
+    owner = owner_payload["email"]
+    
+    async with pg_pool.acquire() as conn:
+        file_record = await conn.fetchrow(
+            """
+            SELECT name, owner_email 
+            FROM files 
+            WHERE id = $1 AND (owner_email = $2 OR id IN (SELECT file_id FROM shared_files WHERE shared_with_email = $2))
+            """,
+            file_id, owner
+        )
+        
+        if not file_record:
+            raise HTTPException(status_code=404, detail="File not found or not authorized")
+        
+        # Determine path (uploaded files are in owner's subdir)
+        filename = file_record['name']
+        file_owner = file_record['owner_email']
+        file_path = os.path.join(UPLOAD_DIR, file_owner, filename)
+        
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Physical file missing")
+            
+        await log_activity(owner, "download_file", {"file_id": file_id})
+        return FileResponse(file_path, filename=filename)
+
+@app.get("/files")
+async def get_files(owner_payload: dict = Depends(get_current_user)):
+    owner = owner_payload["email"]
+    # 1. Get owned files from memory
+    user_files = [
+        {**info, "is_owner": True, "shared_with": []}
+        for info in file_store.values()
+        if info.get("owner") == owner
+    ]
+    
+    # 2. Get shared files from DB
+    async with pg_pool.acquire() as conn:
+        shared_records = await conn.fetch(
+            """SELECT f.* FROM files f 
+               JOIN shared_files s ON f.id = s.file_id 
+               WHERE s.shared_with_email = $1""", 
+            owner
+        )
+        for row in shared_records:
+            user_files.append({
+                "id": row["id"],
+                "name": row["name"],
+                "columns": json.loads(row["columns"]) if isinstance(row["columns"], str) else row["columns"],
+                "is_owner": False,
+                "owner": row["owner_email"],
+            })
+            
+    return {"files": user_files}
+
+class ShareFileRequest(BaseModel):
+    file_id: str
+    target_email: str
+
+@app.post("/files/share")
+async def share_file(req: ShareFileRequest, owner_payload: dict = Depends(get_current_user)):
+    owner = owner_payload["email"]
+    
+    # Verify ownership
+    skey = _scoped_key(owner, req.file_id)
+    if skey not in file_store:
+        raise HTTPException(status_code=403, detail="You do not own this file or it does not exist")
+    
+    async with pg_pool.acquire() as conn:
+        # Check if target exists
+        target = await conn.fetchrow("SELECT email FROM users WHERE email = $1", req.target_email.lower())
+        if not target:
+            raise HTTPException(status_code=404, detail="Target user not found")
+        
+        await conn.execute(
+            """INSERT INTO shared_files (file_id, owner_email, shared_with_email) 
+               VALUES ($1, $2, $3) ON CONFLICT DO NOTHING""",
+            req.file_id, owner, req.target_email.lower()
+        )
+    return {"message": f"File shared with {req.target_email}"}
+
+@app.get("/columns/{file_id}")
+async def get_columns(file_id: str, owner_payload: dict = Depends(get_current_user)):
+    owner = owner_payload["email"]
+    skey = _scoped_key(owner, file_id)
+    if skey in file_store:
+        return {"columns": file_store[skey]["columns"]}
+    if skey in storage:
+        return {"columns": storage[skey].columns.tolist()}
+    raise HTTPException(status_code=404, detail="File not found")
+
+@app.delete("/file/{file_id}")
+async def delete_file(file_id: str, owner_payload: dict = Depends(get_current_user)):
+    owner = owner_payload["email"]
+    skey = _scoped_key(owner, file_id)
+    storage.pop(skey, None)
+    file_store.pop(skey, None)
+    
+    # Remove from disk
+    persist_path = os.path.join(UPLOAD_DIR, owner, f"{file_id}.csv")
+    if os.path.exists(persist_path):
+        os.remove(persist_path)
+    _save_file_metadata(owner)
+    
+    # Remove from DB and Shares
+    async with pg_pool.acquire() as conn:
+        await conn.execute("DELETE FROM shared_files WHERE file_id = $1", file_id)
+        await conn.execute("DELETE FROM files WHERE id = $1 AND owner_email = $2", file_id, owner)
+    
+    await log_activity(owner, "delete_file", {"file_id": file_id})
+    return {"message": "File deleted successfully"}
+
+@app.delete("/files/clear")
+async def clear_all_files(owner_payload: dict = Depends(get_current_user)):
+    owner = owner_payload["email"]
+    
+    # Clear only this user's files from memory
+    keys_to_remove = [k for k, v in file_store.items() if v.get("owner") == owner]
+    for k in keys_to_remove:
+        storage.pop(k, None)
+        file_store.pop(k, None)
+    
+    # Clear from disk
+    user_upload_dir = os.path.join(UPLOAD_DIR, owner)
+    if os.path.exists(user_upload_dir):
+        import shutil
+        shutil.rmtree(user_upload_dir, ignore_errors=True)
+    
+    # Clear from DB
+    async with pg_pool.acquire() as conn:
+        await conn.execute("DELETE FROM files WHERE owner_email = $1", owner)
+    
+    return {"message": "All files cleared successfully"}
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Collections  (persisted to Supabase, user-scoped)
+# ═══════════════════════════════════════════════════════════════════════
+
+async def _perform_background_save(task_id: str, collection_name: str, config: dict, df: pd.DataFrame, owner: str):
+    try:
+        _check_task_cancelled(task_id)
+        task_store[task_id] = {"status": "processing", "progress": 5, "message": "Initiating save sequence..."}
+        _check_task_cancelled(task_id)
+        task_store[task_id].update({"progress": 15, "message": "Compressing and writing CSV data..."})
+        result_filename = f"result_{uuid.uuid4().hex}.zip"
+        
+        # Save to user-scoped result directory
+        user_result_dir = os.path.join(RESULT_DIR, owner)
+        os.makedirs(user_result_dir, exist_ok=True)
+        file_path = os.path.join(user_result_dir, result_filename)
+        
+        _check_task_cancelled(task_id)
+        # Offload ZIP-compressed CSV writing to a thread
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: df.to_csv(
+            file_path, 
+            index=False, 
+            compression={'method': 'zip', 'archive_name': 'data.csv'}
+        ))
+        
+        # 3. Upload to Supabase Storage if available
+        if supabase:
+            task_store[task_id].update({"progress": 60, "message": "Relaying to cloud storage..."})
+            try:
+                # Read back recorded file into buffer for upload
+                with open(file_path, "rb") as f:
+                    supabase_path = f"{owner}/{result_filename}"
+                    supabase.storage.from_('results').upload(
+                        path=supabase_path,
+                        file=f,
+                        file_options={"content-type": "application/zip"}
+                    )
+                logger.info(f"Supabase: Result uploaded to 'results/{supabase_path}'")
+            except Exception as se:
+                logger.error(f"Supabase Upload Failed: {se}")
+                # Optional: carry on or fail? User wants Supabase, so let's log it.
+        
+        _check_task_cancelled(task_id)
+        task_store[task_id].update({"progress": 85, "message": "Finalizing database records..."})
+        
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO collections (name, owner_email, config, result_csv)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT ON CONSTRAINT collections_name_owner_key DO UPDATE
+                    SET config = EXCLUDED.config,
+                        result_csv = EXCLUDED.result_csv
+                """,
+                collection_name,
+                owner,
+                json.dumps(config),
+                result_filename,
+            )
+        
+        _check_task_cancelled(task_id)
+        task_store[task_id] = {"status": "completed", "progress": 100, "message": "Collection saved and secured to Cloud!"}
+        logger.info(f"Background: Collection '{collection_name}' persisted (Supabase + Local) for {owner}")
+    except Exception as e:
+        if task_store.get(task_id, {}).get("status") == "cancelled":
+            logger.info(f"Background operation {task_id} successfully halted.")
+            return
+        logger.error(f"Background Save Failed for {collection_name}: {e}")
+        task_store[task_id] = {"status": "failed", "error": str(e)}
+
+@app.post("/collections")
+async def save_collection(
+    collection: CollectionSchema,
+    background_tasks: BackgroundTasks,
+    owner_payload: dict = Depends(get_current_user),
+):
+    owner = owner_payload["email"]
+    task_id = str(uuid.uuid4())
+    if collection.result_id:
+        skey = _scoped_key(owner, collection.result_id)
+        if skey in storage:
+            df = storage[skey]
+            task_store[task_id] = {"status": "queued", "progress": 0, "message": "Queuing save operation..."}
+            background_tasks.add_task(_perform_background_save, task_id, collection.name, collection.config, df, owner)
+            return {"task_id": task_id}
+    
+    # If no result id, just save metadata (fast)
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO collections (name, owner_email, config) VALUES ($1, $2, $3) 
+               ON CONFLICT ON CONSTRAINT collections_name_owner_key DO UPDATE SET config = EXCLUDED.config""",
+            collection.name, owner, json.dumps(collection.config)
+        )
+    return {"message": "Metadata saved successfully"}
+
+@app.get("/collections")
+async def get_collections(owner_payload: dict = Depends(get_current_user)):
+    owner = owner_payload["email"]
+    async with pg_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT name, config, (result_csv IS NOT NULL) AS has_result FROM collections WHERE owner_email = $1",
+            owner,
+        )
+    cols = []
+    for r in rows:
+        cols.append({
+            "name": r["name"],
+            "config": json.loads(r["config"]) if isinstance(r["config"], str) else r["config"],
+            "has_result": r["has_result"],
+        })
+    return {"collections": cols}
+
+
+@app.delete("/collections/{name}")
+async def delete_collection(name: str, owner_payload: dict = Depends(get_current_user)):
+    owner = owner_payload["email"]
+    async with pg_pool.acquire() as conn:
+        # Also delete the result file from disk
+        row = await conn.fetchrow(
+            "SELECT result_csv FROM collections WHERE name = $1 AND owner_email = $2", name, owner
+        )
+        if row and row["result_csv"]:
+            result_filename = row["result_csv"]
+            # 1. Delete from Supabase Storage
+            if supabase:
+                try:
+                    supabase_path = f"{owner}/{result_filename}"
+                    supabase.storage.from_('results').remove([supabase_path])
+                    logger.info(f"Supabase: Deleted 'results/{supabase_path}'")
+                except Exception as se:
+                    logger.error(f"Supabase Delete Failed: {se}")
+            
+            # 2. Delete from local disk
+            result_path = os.path.join(RESULT_DIR, owner, result_filename)
+            if os.path.exists(result_path):
+                os.remove(result_path)
+        
+        result = await conn.execute(
+            "DELETE FROM collections WHERE name = $1 AND owner_email = $2", name, owner
+        )
+    if result == "DELETE 0":
+        raise HTTPException(status_code=404, detail="Collection not found")
+    
+    await log_activity(owner, "delete_collection", {"name": name})
+    return {"message": f"Collection '{name}' deleted successfully"}
+
+@app.delete("/tasks/{task_id}")
+async def cancel_task(task_id: str):
+    if task_id not in task_store:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    current_status = task_store[task_id].get("status")
+    if current_status in ["completed", "failed"]:
+        return {"message": f"Task already {current_status}"}
+    
+    task_store[task_id]["status"] = "cancelled"
+    task_store[task_id]["message"] = "Task cancelled by user"
+    return {"message": "Task cancellation requested"}
+
+@app.get("/collections/download/{name}")
+async def download_collection_result(
+    name: str, 
+    owner_payload: dict = Depends(get_current_user)
+):
+    owner = owner_payload["email"]
+    async with pg_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT result_csv FROM collections WHERE name = $1 AND owner_email = $2", name, owner
+        )
+    if not row or not row["result_csv"]:
+        raise HTTPException(status_code=404, detail="Result not found or not yet generated")
+
+    # 1. Try Supabase Storage first if available
+    if supabase:
+        try:
+            supabase_path = f"{owner}/{row['result_csv']}"
+            data = supabase.storage.from_('results').download(supabase_path)
+            if data:
+                return StreamingResponse(
+                    io.BytesIO(data),
+                    media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.zip"'}
+                )
+        except Exception as se:
+            logger.warning(f"Supabase pull failed, falling back to local: {se}")
+
+    # 2. Fallback to local disk
+    file_path = os.path.join(RESULT_DIR, owner, row["result_csv"])
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Result file missing everywhere")
+
+    await log_activity(owner, "download_collection", {"name": name})
+    return FileResponse(file_path, filename=f"{name}.zip", media_type="application/zip")
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Join Engine  (FIXED: no more cartesian products)
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.get("/tasks/{task_id}")
+async def get_task_status(task_id: str):
+    if task_id not in task_store:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task_store[task_id]
+
+def _check_task_cancelled(task_id: str):
+    if task_store.get(task_id, {}).get("status") == "cancelled":
+        raise Exception("Task cancelled by user")
+
+# Non-async version so it runs in a thread pool and doesn't block the event loop
+def _perform_background_join(task_id: str, owner: str, file_a_id: str, file_b_id: str, keys_a: List[str], keys_b: List[str], join_type: str, transforms: Optional[JoinTransformations]):
+    try:
+        _check_task_cancelled(task_id)
+        task_store[task_id] = {"status": "processing", "progress": 5, "message": "Preparing work area..."}
+        _check_task_cancelled(task_id)
+        task_store[task_id].update({"progress": 15, "message": "Accessing source datasets..."})
+        _check_task_cancelled(task_id)
+        df_a = load_dataframe(owner, file_a_id)
+        df_b = load_dataframe(owner, file_b_id)
+        
+        _check_task_cancelled(task_id)
+        task_store[task_id].update({"progress": 30, "message": "Performing join logic..."})
+        
+        df_a = df_a.copy()
+        df_b = df_b.copy()
+
+        # ─── FIXED: Safe normalization (trim + lowercase only) ───────
+        # The old normalize_val() stripped all non-digits and took last 10,
+        # which caused cartesian products on non-phone columns.
+        def normalize_val(val):
+            """Safe normalization: strip whitespace and lowercase for consistent matching."""
+            if pd.isna(val):
+                return val
+            return str(val).strip().lower()
+
+        # Cast join keys to normalized strings to prevent type mismatch
+        if keys_a:
+            for col in keys_a:
+                if col in df_a.columns:
+                    df_a[col] = df_a[col].apply(normalize_val)
+        if keys_b:
+            for col in keys_b:
+                if col in df_b.columns:
+                    df_b[col] = df_b[col].apply(normalize_val)
+
+        # ─── CRITICAL: Deduplicate on join keys BEFORE merging ───────
+        # Without this, if key "ECO CYBER" appears 3× in A and 4× in B,
+        # pd.merge produces 3×4=12 rows (cartesian product per key).
+        # Deduplicating keeps only the first occurrence of each key value,
+        # so each key matches at most once → no row explosion.
+        if join_type != "append":
+            if keys_a:
+                valid_keys_a = [k for k in keys_a if k in df_a.columns]
+                if valid_keys_a:
+                    logger.info(f"Pre-merge dedup: A had {len(df_a)} rows, deduplicating on {valid_keys_a}")
+                    df_a = df_a.drop_duplicates(subset=valid_keys_a, keep='first')
+                    logger.info(f"Pre-merge dedup: A now has {len(df_a)} rows")
+            if keys_b:
+                valid_keys_b = [k for k in keys_b if k in df_b.columns]
+                if valid_keys_b:
+                    logger.info(f"Pre-merge dedup: B had {len(df_b)} rows, deduplicating on {valid_keys_b}")
+                    df_b = df_b.drop_duplicates(subset=valid_keys_b, keep='first')
+                    logger.info(f"Pre-merge dedup: B now has {len(df_b)} rows")
+
+        if join_type == "append":
+            common_columns = list(set(df_a.columns) & set(df_b.columns))
+            merged_df = pd.concat([df_a[common_columns], df_b[common_columns]], ignore_index=True)
+        elif join_type == "left_anti":
+            merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how="left", indicator=True, suffixes=("_fileA", "_fileB"))
+            merged_df = merged_df[merged_df["_merge"] == "left_only"].drop(columns=["_merge"])
+            # For anti-joins, keep only columns from the source side
+            cols_to_keep = [c for c in merged_df.columns if not c.endswith("_fileB")]
+            merged_df = merged_df[cols_to_keep]
+            # Clean up suffixed column names from the kept side
+            merged_df.columns = [c.replace("_fileA", "") if c.endswith("_fileA") else c for c in merged_df.columns]
+        elif join_type == "right_anti":
+            merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how="right", indicator=True, suffixes=("_fileA", "_fileB"))
+            merged_df = merged_df[merged_df["_merge"] == "right_only"].drop(columns=["_merge"])
+            # For anti-joins, keep only columns from the source side
+            cols_to_keep = [c for c in merged_df.columns if not c.endswith("_fileA")]
+            merged_df = merged_df[cols_to_keep]
+            # Clean up suffixed column names from the kept side
+            merged_df.columns = [c.replace("_fileB", "") if c.endswith("_fileB") else c for c in merged_df.columns]
+        elif join_type == "full_anti":
+            merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how="outer", indicator=True, suffixes=("_fileA", "_fileB"))
+            merged_df = merged_df[merged_df["_merge"] != "both"].drop(columns=["_merge"])
+        else:
+            merged_df = pd.merge(df_a, df_b, left_on=keys_a, right_on=keys_b, how=join_type, suffixes=("_fileA", "_fileB"))
+
+        # Safety net: drop any remaining fully-identical duplicate rows
+        merged_df = merged_df.drop_duplicates()
+
+        _check_task_cancelled(task_id)
+        task_store[task_id].update({"progress": 60, "message": "Applying transformations..."})
+        
+        if transforms:
+            if transforms.cast:
+                for col, dtype in transforms.cast.items():
+                    if col in merged_df.columns:
+                        try:
+                            if "datetime" in dtype:
+                                merged_df[col] = pd.to_datetime(merged_df[col], errors="coerce")
+                            else:
+                                merged_df[col] = merged_df[col].astype(dtype)
+                        except Exception: pass
+            if transforms.rename:
+                merged_df = merged_df.rename(columns={o: n for o, n in transforms.rename.items() if o in merged_df.columns})
+            if transforms.drop:
+                to_drop = [c for c in transforms.drop if c in merged_df.columns]
+                if to_drop: merged_df = merged_df.drop(columns=to_drop)
+
+        _check_task_cancelled(task_id)
+        task_store[task_id].update({"progress": 80, "message": "Calculating metrics..."})
+        
+        if len(merged_df) > JOIN_EXPLOSION_THRESHOLD:
+            logger.warning(f"JOIN EXPLOSION: {len(merged_df)} rows generated.")
+
+        # Calculate metrics against original (pre-normalization) row counts
+        orig_a_len = len(df_a)
+        orig_b_len = len(df_b)
+        metrics = {
+            "match_rate_a": round(len(merged_df) / orig_a_len * 100, 2) if orig_a_len > 0 else 0,
+            "match_rate_b": round(len(merged_df) / orig_b_len * 100, 2) if orig_b_len > 0 else 0,
+            "null_count": int(merged_df.isnull().sum().sum()),
+            "duplicate_count": int(merged_df.duplicated().sum()),
+        }
+
+        result_id = str(uuid.uuid4())
+        skey = _scoped_key(owner, result_id)
+        storage[skey] = merged_df
+        
+        task_store[task_id] = {
+            "status": "completed",
+            "progress": 100,
+            "result": {
+                "result_id": result_id,
+                "row_count": len(merged_df),
+                "col_count": len(merged_df.columns),
+                "columns": merged_df.columns.tolist(),
+                "metrics": metrics,
+            }
+        }
+    except Exception as e:
+        if task_store.get(task_id, {}).get("status") == "cancelled":
+            logger.info(f"Background join {task_id} successfully halted.")
+            return
+        logger.exception(f"Background Join Failed: {e}")
+        task_store[task_id] = {"status": "failed", "error": str(e)}
+
+def _perform_background_multi_join(task_id: str, owner: str, base_file_id: str, target_file_ids: List[str], common_key: str, join_type: str):
+    """Iteratively join multiple files to a base dataframe in a background thread."""
+    try:
+        _check_task_cancelled(task_id)
+        task_store[task_id] = {"status": "processing", "progress": 5, "message": "Initializing multi-merge sequence..."}
+        
+        # Load base dataframe
+        df_result = load_dataframe(owner, base_file_id).copy()
+        
+        # Safe normalization helper (consistent with pairwise matches)
+        def normalize_val(val):
+            if pd.isna(val): return val
+            return str(val).strip().lower()
+
+        # Normalize key in base
+        if common_key in df_result.columns:
+            df_result[common_key] = df_result[common_key].apply(normalize_val)
+            # Deduplicate base if not appending
+            if join_type != "append":
+                df_result = df_result.drop_duplicates(subset=[common_key], keep='first')
+
+        total_targets = len(target_file_ids)
+        for i, target_id in enumerate(target_file_ids):
+            _check_task_cancelled(task_id)
+            # Sub-progress distribution
+            current_progress = int(10 + ((i / total_targets) * 80))
+            task_store[task_id].update({"progress": current_progress, "message": f"Merging file {i+1} of {total_targets}..."})
+            
+            df_target = load_dataframe(owner, target_id).copy()
+            
+            # Normalize key in target
+            if common_key in df_target.columns:
+                df_target[common_key] = df_target[common_key].apply(normalize_val)
+                # Deduplicate target if not appending
+                if join_type != "append":
+                    df_target = df_target.drop_duplicates(subset=[common_key], keep='first')
+            
+            # Perform merge
+            if join_type == "append":
+                common_cols = list(set(df_result.columns) & set(df_target.columns))
+                df_result = pd.concat([df_result[common_cols], df_target[common_cols]], ignore_index=True)
+            elif join_type == "left_anti":
+                df_result = pd.merge(df_result, df_target, on=common_key, how="left", indicator=True, suffixes=("", f"_f{i+1}"))
+                df_result = df_result[df_result["_merge"] == "left_only"].drop(columns=["_merge"])
+                # Keep only result columns
+                cols_to_keep = [c for c in df_result.columns if not c.endswith(f"_f{i+1}")]
+                df_result = df_result[cols_to_keep]
+            elif join_type == "right_anti":
+                df_result = pd.merge(df_result, df_target, on=common_key, how="right", indicator=True, suffixes=("", f"_f{i+1}"))
+                df_result = df_result[df_result["_merge"] == "right_only"].drop(columns=["_merge"])
+                # Keep only target columns
+                cols_to_keep = [c for c in df_result.columns if not c.endswith(f"_orig") or c == common_key] # This logic is trickier in multi-step
+                # Actually, for right_anti in a multi-merge, we just take what's newly unique in the current target
+                # Simplified: result = current_target[~current_target[key].isin(result[key])]
+                df_result = df_target[~df_target[common_key].isin(df_result[common_key])]
+            elif join_type == "full_anti":
+                df_result = pd.merge(df_result, df_target, on=common_key, how="outer", indicator=True, suffixes=("", f"_f{i+1}"))
+                df_result = df_result[df_result["_merge"] != "both"].drop(columns=["_merge"])
+            else:
+                # Standard inner, left, right, outer
+                df_result = pd.merge(df_result, df_target, on=common_key, how=join_type, suffixes=("", f"_f{i+1}"))
+            
+            # Periodic cleanup
+            df_result = df_result.drop_duplicates()
+
+        _check_task_cancelled(task_id)
+        task_store[task_id].update({"progress": 95, "message": "Finalizing multi-merge result..."})
+        
+        result_id = str(uuid.uuid4())
+        skey = _scoped_key(owner, result_id)
+        storage[skey] = df_result
+        
+        task_store[task_id] = {
+            "status": "completed",
+            "progress": 100,
+            "result": {
+                "result_id": result_id,
+                "row_count": len(df_result),
+                "col_count": len(df_result.columns),
+                "columns": df_result.columns.tolist(),
+                "metrics": {
+                    "null_count": int(df_result.isnull().sum().sum()),
+                    "duplicate_count": int(df_result.duplicated().sum())
+                }
+            }
+        }
+        logger.info(f"Multi-Merge Complete: {len(target_file_ids)} targets -> {result_id}")
+    except Exception as e:
+        if task_store.get(task_id, {}).get("status") == "cancelled": return
+        logger.exception(f"Multi-Join Failed: {e}")
+        task_store[task_id] = {"status": "failed", "error": str(e)}
+
+@app.post("/join")
+async def join_data(
+    background_tasks: BackgroundTasks,
+    file_a_id: str = Query(...),
+    file_b_id: str = Query(...),
+    keys_a: Optional[List[str]] = Query(None),
+    keys_b: Optional[List[str]] = Query(None),
+    join_type: str = Query("inner"),
+    transforms: Optional[JoinTransformations] = None,
+    owner_payload: dict = Depends(get_current_user),
+):
+    owner = owner_payload["email"]
+    
+    # Verify both files belong to this user
+    skey_a = _scoped_key(owner, file_a_id)
+    skey_b = _scoped_key(owner, file_b_id)
+    if skey_a not in storage and skey_a not in file_store:
+        raise HTTPException(status_code=404, detail="Source file A not found or not owned by you")
+    if skey_b not in storage and skey_b not in file_store:
+        raise HTTPException(status_code=404, detail="Source file B not found or not owned by you")
+    
+    task_id = str(uuid.uuid4())
+    task_store[task_id] = {"status": "queued", "progress": 0, "message": "Waiting for worker..."}
+    background_tasks.add_task(
+        _perform_background_join,
+        task_id, owner, file_a_id, file_b_id, keys_a, keys_b, join_type, transforms
+    )
+    return {"task_id": task_id}
+
+@app.post("/join/multi")
+async def join_multi_data(
+    background_tasks: BackgroundTasks,
+    base_file_id: str = Query(...),
+    target_file_ids: List[str] = Query(...),
+    common_key: str = Query(...),
+    join_type: str = Query("inner"),
+    owner_payload: dict = Depends(get_current_user),
+):
+    owner = owner_payload["email"]
+    
+    # Verify base exists
+    skey_base = _scoped_key(owner, base_file_id)
+    if skey_base not in storage and skey_base not in file_store:
+        raise HTTPException(status_code=404, detail="Source file not found")
+        
+    task_id = str(uuid.uuid4())
+    task_store[task_id] = {"status": "queued", "progress": 0, "message": "Queuing multi-file operation..."}
+    background_tasks.add_task(
+        _perform_background_multi_join,
+        task_id, owner, base_file_id, target_file_ids, common_key, join_type
+    )
+    return {"task_id": task_id}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Preview / Download (user-scoped)
+# ═══════════════════════════════════════════════════════════════════════
+
+def apply_filters(df: pd.DataFrame, filters_data: Union[str, dict, None]) -> pd.DataFrame:
+    """Apply column-based exact filters to the DataFrame."""
+    if not filters_data:
+        return df
+    
+    try:
+        filters = filters_data
+        if isinstance(filters_data, str):
+            filters = json.loads(filters_data)
+            
+        if not filters or not isinstance(filters, dict):
+            return df
+            
+        filtered_df = df.copy()
+        for col, val in filters.items():
+            if col in filtered_df.columns and val:
+                if isinstance(val, dict) and ("start" in val or "end" in val):
+                    # Date range filter
+                    try:
+                        col_dt = pd.to_datetime(filtered_df[col], errors='coerce')
+                        if val.get("start"):
+                            start_dt = pd.to_datetime(val["start"])
+                            filtered_df = filtered_df[col_dt >= start_dt]
+                        if val.get("end"):
+                            end_dt = pd.to_datetime(val["end"])
+                            filtered_df = filtered_df[col_dt <= end_dt]
+                    except Exception as fe:
+                        logger.error(f"Error filtering date range for {col}: {fe}")
+                else:
+                    # Exact match (since we're using dropdowns of unique values)
+                    filtered_df = filtered_df[filtered_df[col].astype(str) == str(val)]
+        return filtered_df
+    except Exception as e:
+        logger.error(f"Error applying filters: {e}")
+        return df
+
+@app.get("/preview/{result_id}")
+async def get_preview(
+    result_id: str, 
+    filters: Optional[str] = Query(None),
+    limit: int = Query(50),
+    owner_payload: dict = Depends(get_current_user),
+):
+    owner = owner_payload["email"]
+    try:
+        df = load_dataframe(owner, result_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Result not found")
+
+    # Parse filters once
+    f_dict = {}
+    if filters:
+        try:
+            f_dict = json.loads(filters)
+        except: pass
+
+    # Apply ALL filters for the records preview
+    filtered_df = apply_filters(df, f_dict)
+    preview_df = filtered_df.head(limit).fillna("")
+    
+    # Calculate unique values and detect types
+    unique_values = {}
+    column_info = {}
+    
+    for col in df.columns:
+        # Detect type
+        dtype = "text"
+        metadata = {}
+        try:
+            # Drop NaNs for type checking
+            s_clean = df[col].dropna()
+            if not s_clean.empty:
+                # Try parsing as datetime
+                s_dt = pd.to_datetime(s_clean, errors='coerce')
+                # If > 70% of non-nulls are dates, treat as date
+                valid_date_ratio = s_dt.notnull().sum() / len(s_clean)
+                if valid_date_ratio > 0.7:
+                    dtype = "date"
+                    metadata = {
+                        "min": s_dt.min().isoformat() if not s_dt.isna().all() else None,
+                        "max": s_dt.max().isoformat() if not s_dt.isna().all() else None
+                    }
+        except:
+            pass
+            
+        column_info[col] = {"type": dtype, **metadata}
+        
+        # Faceted Search Unique Values
+        other_filters = {k: v for k, v in f_dict.items() if k != col}
+        temp_df = apply_filters(df, other_filters)
+        
+        # Limit unique values for performance
+        uvs = temp_df[col].dropna().unique().tolist()
+        if len(uvs) > 100:
+            uvs = uvs[:100]
+        unique_values[col] = sorted([str(x) for x in uvs])
+
+    return {
+        "columns": df.columns.tolist(),
+        "data": preview_df.to_dict(orient="records"),
+        "unique_values": unique_values,
+        "column_info": column_info,
+        "metrics": {
+            "row_count": len(filtered_df),
+            "total_count": len(df),
+            "col_count": len(df.columns),
+            "null_count": int(filtered_df.isnull().sum().sum()),
+            "duplicate_count": int(filtered_df.duplicated().sum())
+        }
+    }
+
+class ColumnDropRequest(BaseModel):
+    columns: List[str]
+
+@app.delete("/result/{result_id}/columns")
+async def drop_result_columns(
+    result_id: str, 
+    req: ColumnDropRequest,
+    limit: int = Query(50),
+    owner_payload: dict = Depends(get_current_user)
+):
+    owner = owner_payload["email"]
+    try:
+        df = load_dataframe(owner, result_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Result not found or expired")
+
+    # Drop columns
+    cols_to_drop = [c for c in req.columns if c in df.columns]
+    if cols_to_drop:
+        df = df.drop(columns=cols_to_drop)
+        skey = _scoped_key(owner, result_id)
+        storage[skey] = df  # Update in-memory store
+
+    # Return updated preview and metrics
+    preview_df = df.head(limit).fillna("")
+    return {
+        "message": f"Successfully dropped {len(cols_to_drop)} columns",
+        "data": preview_df.to_dict(orient="records"),
+        "columns": preview_df.columns.tolist(),
+        "metrics": {
+            "row_count": len(df),
+            "col_count": len(df.columns),
+            "null_count": int(df.isnull().sum().sum()),
+            "duplicate_count": int(df.duplicated().sum()),
+        }
+    }
+
+@app.get("/download/{result_id}")
+async def download_result(
+    result_id: str,
+    filters: Optional[str] = Query(None),
+    filename: Optional[str] = Query(None),
+    owner_payload: dict = Depends(get_current_user)
+):
+    owner = owner_payload["email"]
+    try:
+        df = load_dataframe(owner, result_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Result not found")
+
+    # Apply filters to the full dataset before download
+    filtered_df = apply_filters(df, filters)
+
+    # Use custom filename if provided, otherwise default
+    base_name = filename if filename else f"joined_data_{result_id}"
+    # Remove any existing extensions user might have passed
+    base_name = base_name.split('.')[0]
+    display_name = base_name
+    
+    # Generate a ZIP compressed CSV on the fly
+    buf = io.BytesIO()
+    filtered_df.to_csv(
+        buf, 
+        index=False, 
+        compression={'method': 'zip', 'archive_name': 'data.csv'}
+    )
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{display_name}.zip"'},
+    )
+
+# ═══════════════════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    import uvicorn
+    # Enable reload for development
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
